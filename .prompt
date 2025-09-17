@@ -57,3 +57,13 @@ ReleaseEvent
 SponsorshipEvent
 WatchEvent
 ```
+
+3. pagination
+
+一定要保证这两个 div 加载好了再渲染，并且一定要和它同级：
+
+```
+  <div class="mb-3 dashboard-changelog &lt;color-bg-default border color-border-default p-3 rounded-2">
+```
+
+另外添加翻页功能，对应 github api 的 pagination。
