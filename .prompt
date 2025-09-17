@@ -1,0 +1,59 @@
+1. init
+
+写一个 UserScript
+
+```
+// @match        https://github.com/
+// @match        https://github.com/dashboard
+```
+先要求用户提供一个 token，并且安全存储（如果 violentmonkey 支持的话），如果已经提供了就不再要求，除非 token 失效了。
+
+然后用以下这些方式获取 username，要注意异常处理和加载时机：
+
+```
+document.querySelector('meta[name="user-login"]').content
+document.querySelector('meta[name="octolytics-actor-login"]').content
+document.querySelector('[data-login]').getAttribute("data-login")
+```
+
+然后用 `/users/{username}/received_events` 这个 github api 获取events，将它们做成和 github dashboard 风格一样的卡片。
+
+显示在这两个 div 上面，同级：
+
+```
+  <div>
+  </div>
+  <div class="mb-3 dashboard-changelog &lt;color-bg-default border color-border-default p-3 rounded-2">
+```
+
+2. append
+
+代码只用英文，并且追求 self documented。
+
+token 让用户主动去设置里填，不要弹出 prompt。
+
+如果有任何一个环节失败，例如没获取到 username 或者 token 无效，就不要展示，也不需要弹出错误提示，宗旨就是功能异常的时候不要影响原页面。
+
+但是可以在控制台输出错误日志，方便开发者排查问题。
+
+我相信你掌握有 github api 的文档，所以要根据 event 的 type 来渲染，例如 WatchEvent 要根据 payload.action 来渲染，有以下这些 type：
+
+```
+CommitCommentEvent
+CreateEvent
+DeleteEvent
+ForkEvent
+GollumEvent
+IssueCommentEvent
+IssuesEvent
+MemberEvent
+PublicEvent
+PullRequestEvent
+PullRequestReviewEvent
+PullRequestReviewCommentEvent
+PullRequestReviewThreadEvent
+PushEvent
+ReleaseEvent
+SponsorshipEvent
+WatchEvent
+```
