@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.5
+// @version      0.6
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -389,14 +389,15 @@
         } ${repoLink}`;
         break;
       case "ForkEvent":
-        content = `${actorAvatar}${actorLink} forked ${repoLink}`;
-        if (payload.forkee && payload.forkee.html_url) {
-          content += ` (<a href="${payload.forkee.html_url}" target="_blank">new fork</a>)`;
-        }
+        content = `${actorAvatar}${actorLink} forked <a href="${payload.forkee.html_url}" target="_blank">${payload.forkee.full_name}</a> from ${repoLink}`;
         break;
       case "PushEvent": {
         const commits = payload.commits || [];
-        content = `${actorAvatar}${actorLink} pushed to ${repoLink}`;
+        content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${
+          repo.name
+        }/compare/${payload.before}...${payload.head}" target="_blank">${
+          payload.size
+        } ${payload.size > 1 ? "commits" : "commit"}</a> to ${repoLink}`;
         if (shouldRenderBody) {
           if (commits.length > 0) {
             content += `<ul style="margin-top:3px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${commits
@@ -542,6 +543,12 @@
           payload.release.name || payload.release.tag_name
         }</a>
                 in ${repoLink}`;
+        if (shouldRenderBody) {
+          content += renderBodyOrShortHtml(
+            payload.release.body,
+            payload.release.short_description_html
+          );
+        }
         break;
       case "SponsorshipEvent":
         content = `${actorAvatar}${actorLink} sponsored or received a sponsorship.`;
