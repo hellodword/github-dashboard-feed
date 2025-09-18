@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.7
+// @version      0.7.1
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -25,6 +25,19 @@
 (async function run() {
   let shouldRenderBody = await GM.getValue("render_body", false);
   let shouldRenderBodyMenuID = null;
+  let md = null;
+
+  function initMD() {
+    if (shouldRenderBody && !md) {
+      md = markdownit({
+        html: false,
+        linkify: true,
+        typographer: true,
+        breaks: true,
+        xhtmlOut: true,
+      });
+    }
+  }
 
   function rewriteConsole() {
     const tag = "[GH Dashboard Feed]";
@@ -81,6 +94,7 @@
       `Turn ${shouldRenderBody ? "Off" : "On"} Render Body Feature`,
       async () => {
         shouldRenderBody = !shouldRenderBody;
+        initMD();
         await GM.setValue("render_body", shouldRenderBody);
         console.log(
           `Render Body Feature is now ${shouldRenderBody ? "On" : "Off"}`
@@ -146,19 +160,17 @@
   }
 
   /**
-   * Wait for BOTH dashboard-changelog divs loaded (by className).
+   * Wait for feed-right-sidebar
    */
-  function waitForDashboardChangelogDivs(timeout = 6000) {
+  function waitForSideBar(timeout = 6000) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
       function check() {
-        const allDivs = Array.from(
-          document.querySelectorAll(".dashboard-changelog")
-        );
-        if (allDivs.length >= 1) {
-          resolve(allDivs);
+        const sidebar = document.querySelector(".feed-right-sidebar");
+        if (sidebar) {
+          resolve(sidebar);
         } else if (Date.now() - start > timeout) {
-          reject(new Error("Timed out waiting for dashboard-changelog divs"));
+          reject(new Error("Timed out waiting for feed-right-sidebar"));
         } else {
           setTimeout(check, 300);
         }
@@ -210,21 +222,12 @@
   }
   function insertEventsSectionSibling(
     cardsWrapper,
-    changelogDivs,
+    sidebar,
     sectionId = "__gh-dashboard-feed-section__"
   ) {
     removeOldSection(sectionId);
     cardsWrapper.id = sectionId;
-    const lastDiv = changelogDivs[1] || changelogDivs[0];
-    if (lastDiv && lastDiv.parentElement) {
-      if (lastDiv.nextSibling) {
-        lastDiv.parentElement.insertBefore(cardsWrapper, lastDiv.nextSibling);
-      } else {
-        lastDiv.parentElement.appendChild(cardsWrapper);
-      }
-    } else {
-      document.body.append(cardsWrapper);
-    }
+    sidebar.appendChild(cardsWrapper);
   }
   /**
    * Pagination logic for GitHub style feed, compact layout.
@@ -352,7 +355,7 @@
    * - If there is short_description_html, render it as HTML.
    * - If only body, render with markdown-it.
    */
-  async function renderEventCard(event, md) {
+  async function renderEventCard(event) {
     const { type, repo, actor, created_at, payload } = event;
     const card = document.createElement("div");
     card.className =
@@ -576,6 +579,7 @@
     const FEED_SECTION_ID = "__gh-dashboard-feed-section__";
 
     rewriteConsole();
+    initMD();
 
     GM.registerMenuCommand("Configure GitHub Token", async () => {
       let val = prompt("GitHub Token", (await getToken()) || "");
@@ -591,18 +595,10 @@
       console.warn("No token configured, skipping.");
       return;
     }
-    const md = shouldRenderBody
-      ? markdownit({
-          html: false,
-          linkify: true,
-          typographer: true,
-          breaks: true,
-          xhtmlOut: true,
-        })
-      : null;
-    const [username, changelogDivs] = await Promise.all([
+
+    const [username, sidebar] = await Promise.all([
       waitForUsername(),
-      waitForDashboardChangelogDivs(),
+      waitForSideBar(),
     ]);
     if (!username) {
       console.warn("Could not find username, skipping.");
@@ -647,7 +643,7 @@
           '<div style="color:#888;padding:12px">No events</div>';
       } else {
         const cards = await Promise.all(
-          events.map((ev) => renderEventCard(ev, md))
+          events.map((ev) => renderEventCard(ev))
         );
         for (const card of cards) {
           cardsRow.appendChild(card);
@@ -669,7 +665,7 @@
         })
       );
 
-      insertEventsSectionSibling(cardsSection, changelogDivs, FEED_SECTION_ID);
+      insertEventsSectionSibling(cardsSection, sidebar, FEED_SECTION_ID);
     }
     render(currentPage);
   } catch (e) {
