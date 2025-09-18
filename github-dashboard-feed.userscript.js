@@ -13,6 +13,7 @@
 // @grant        GM.setValue
 // @grant        GM.registerMenuCommand
 // @grant        GM.unregisterMenuCommand
+// @grant        GM.notification
 // @run-at       document-start
 // @downloadURL  https://raw.githubusercontent.com/hellodword/github-dashboard-feed/refs/heads/master/github-dashboard-feed.userscript.js
 // ==/UserScript==
@@ -24,6 +25,44 @@
   let shouldRenderBody = await GM.getValue("render_body", false);
   let shouldRenderBodyMenuID = null;
 
+  function rewriteConsole() {
+    const tag = "[GH Dashboard Feed]";
+
+    const originalLog = console.log.bind(console);
+    const originalWarn = console.warn.bind(console);
+    const originalError = console.error.bind(console);
+
+    function formatArgs(args) {
+      return args
+        .map((arg) => {
+          if (typeof arg === "string") return arg;
+          else if (typeof arg === "undefined") return "undefined";
+          else if (arg === null) return "null";
+          else if (typeof arg === "object") {
+            if (arg instanceof Error) return arg.stack || arg.toString();
+            try {
+              return JSON.stringify(arg);
+            } catch (e) {
+              return "[object]";
+            }
+          }
+          return String(arg);
+        })
+        .join(" ");
+    }
+
+    function wrapConsole(fn, tag) {
+      return function (...args) {
+        fn.apply(console, [tag, ...args]);
+        GM.notification(formatArgs([tag, ...args]));
+      };
+    }
+
+    console.log = wrapConsole(originalLog, tag);
+    console.warn = wrapConsole(originalWarn, tag);
+    console.error = wrapConsole(originalError, tag);
+  }
+
   async function updateRenderBodyMenuCommand() {
     if (shouldRenderBodyMenuID !== null)
       GM.unregisterMenuCommand(shouldRenderBodyMenuID);
@@ -34,9 +73,7 @@
         shouldRenderBody = !shouldRenderBody;
         await GM.setValue("render_body", shouldRenderBody);
         console.log(
-          `[GH Dashboard UserEvents] Render Body Feature is now ${
-            shouldRenderBody ? "On" : "Off"
-          }`
+          `Render Body Feature is now ${shouldRenderBody ? "On" : "Off"}`
         );
         await updateRenderBodyMenuCommand();
       },
@@ -52,7 +89,7 @@
       const token = await GM.getValue("github_token", "");
       return typeof token === "string" && token.length > 0 ? token : null;
     } catch (e) {
-      console.error("[GH Dashboard UserEvents] Error fetching token:", e);
+      console.error("Error fetching token:", e);
       return null;
     }
   }
@@ -73,7 +110,7 @@
       if (dataLogin && dataLogin.getAttribute("data-login"))
         return dataLogin.getAttribute("data-login");
     } catch (e) {
-      console.error("[GH Dashboard UserEvents] Error detecting username:", e);
+      console.error("Error detecting username:", e);
     }
     return null;
   }
@@ -153,7 +190,7 @@
       }
       return { events: await res.json(), hasNext, hasPrev, lastPage };
     } catch (error) {
-      console.error("[GH Dashboard UserEvents] Fetch error:", error);
+      console.error("Fetch error:", error);
       throw error;
     }
   }
@@ -521,6 +558,8 @@
   try {
     const FEED_SECTION_ID = "__gh-dashboard-feed-section__";
 
+    rewriteConsole();
+
     GM.registerMenuCommand("Configure GitHub Token", async () => {
       let val = prompt("GitHub Token", (await getToken()) || "");
       if (val !== null) {
@@ -532,7 +571,7 @@
 
     const token = await getToken();
     if (!token) {
-      console.warn("[GH Dashboard UserEvents] No token configured, skipping.");
+      console.warn("No token configured, skipping.");
       return;
     }
     const md = shouldRenderBody
@@ -549,9 +588,7 @@
       waitForDashboardChangelogDivs(),
     ]);
     if (!username) {
-      console.warn(
-        "[GH Dashboard UserEvents] Could not find username, skipping."
-      );
+      console.warn("Could not find username, skipping.");
       return;
     }
     let currentPage = 1;
@@ -619,6 +656,6 @@
     }
     render(currentPage);
   } catch (e) {
-    console.error("[GH Dashboard UserEvents] Unexpected failure:", e);
+    console.error("Unexpected failure:", e);
   }
 })();
