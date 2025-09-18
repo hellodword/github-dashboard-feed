@@ -3,12 +3,13 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.6
+// @version      0.7
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
 // @match        https://github.com/dashboard
 // @require      https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.registerMenuCommand
@@ -32,6 +33,11 @@
     const originalWarn = console.warn.bind(console);
     const originalError = console.error.bind(console);
 
+    function toVisibleAscii(str) {
+      // Replace all non-printable ASCII (outside 0x20-0x7E) with '?'
+      return str.replace(/[^\x20-\x7E]/g, "?");
+    }
+
     function formatArgs(args) {
       return args
         .map((arg) => {
@@ -54,7 +60,11 @@
     function wrapConsole(fn, tag) {
       return function (...args) {
         fn.apply(console, [tag, ...args]);
-        GM.notification(formatArgs([tag, ...args]));
+        const text = formatArgs([tag, ...args]);
+        const asciiText = toVisibleAscii(text);
+        GM.notification(
+          asciiText.length > 200 ? asciiText.slice(0, 200) + "..." : asciiText
+        );
       };
     }
 
@@ -557,8 +567,8 @@
         content = `${actorAvatar}${actorLink} did <code>${type}</code> in ${repoLink}`;
     }
     const date = timeAgo(created_at);
-    card.innerHTML = `<div>${content}</div>
-        <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`;
+    card.innerHTML = DOMPurify.sanitize(`<div>${content}</div>
+        <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`);
     return card;
   }
 
@@ -583,7 +593,7 @@
     }
     const md = shouldRenderBody
       ? markdownit({
-          html: true,
+          html: false,
           linkify: true,
           typographer: true,
           breaks: true,
