@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.7.1
+// @version      0.7.2
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -20,17 +20,28 @@
 // ==/UserScript==
 
 /**
- * Main logic.
+ * Entrypoint: main logic wrapped in IIFE.
  */
-(async function run() {
-  let shouldRenderBody = await GM.getValue("render_body", false);
+(async function main() {
+  // Constants
+  const FEED_SECTION_ID = "__gh-dashboard-feed-section__";
+  const TOKEN_KEY = "github_token";
+  const RENDER_BODY_KEY = "render_body";
+  const PAGINATION_MAX_DISPLAY = 6;
+  const NOTIFICATION_MAX_LENGTH = 200;
+
+  // State
+  let shouldRenderBody = false;
   let shouldRenderBodyMenuID = null;
   let md = null;
 
-  function initMD() {
+  /**
+   * Initialize markdown engine if needed.
+   */
+  function initMarkdown() {
     if (shouldRenderBody && !md) {
-      md = markdownit({
-        html: false,
+      md = window.markdownit({
+        html: false, // Strictly disallow raw HTML for safety
         linkify: true,
         typographer: true,
         breaks: true,
@@ -39,29 +50,41 @@
     }
   }
 
+  /**
+   * Rewrite console to include tag and send notifications.
+   * All logs are forced visible and safe.
+   */
   function rewriteConsole() {
-    const tag = "[GH Dashboard Feed]";
+    const TAG = "[GH Dashboard Feed]";
 
-    const originalLog = console.log.bind(console);
-    const originalWarn = console.warn.bind(console);
-    const originalError = console.error.bind(console);
+    // Capture originals
+    const original = {
+      log: console.log.bind(console),
+      warn: console.warn.bind(console),
+      error: console.error.bind(console),
+    };
 
+    /**
+     * Convert string to visible ASCII for notification.
+     */
     function toVisibleAscii(str) {
-      // Replace all non-printable ASCII (outside 0x20-0x7E) with '?'
       return str.replace(/[^\x20-\x7E]/g, "?");
     }
 
+    /**
+     * Convert arguments to a safe, printable string.
+     */
     function formatArgs(args) {
       return args
         .map((arg) => {
           if (typeof arg === "string") return arg;
-          else if (typeof arg === "undefined") return "undefined";
-          else if (arg === null) return "null";
-          else if (typeof arg === "object") {
+          if (typeof arg === "undefined") return "undefined";
+          if (arg === null) return "null";
+          if (typeof arg === "object") {
             if (arg instanceof Error) return arg.stack || arg.toString();
             try {
               return JSON.stringify(arg);
-            } catch (e) {
+            } catch {
               return "[object]";
             }
           }
@@ -70,22 +93,32 @@
         .join(" ");
     }
 
+    /**
+     * Wrap a console function to add tag, and trigger notification.
+     */
     function wrapConsole(fn, tag) {
       return function (...args) {
-        fn.apply(console, [tag, ...args]);
-        const text = formatArgs([tag, ...args]);
-        const asciiText = toVisibleAscii(text);
-        GM.notification(
-          asciiText.length > 200 ? asciiText.slice(0, 200) + "..." : asciiText
-        );
+        fn(tag, ...args);
+        try {
+          const text = formatArgs([tag, ...args]);
+          const asciiText = toVisibleAscii(text);
+          GM.notification(
+            asciiText.length > NOTIFICATION_MAX_LENGTH
+              ? asciiText.slice(0, NOTIFICATION_MAX_LENGTH) + "..."
+              : asciiText
+          );
+        } catch {} // Ignore notification failures
       };
     }
 
-    console.log = wrapConsole(originalLog, tag);
-    console.warn = wrapConsole(originalWarn, tag);
-    console.error = wrapConsole(originalError, tag);
+    console.log = wrapConsole(original.log, TAG);
+    console.warn = wrapConsole(original.warn, TAG);
+    console.error = wrapConsole(original.error, TAG);
   }
 
+  /**
+   * Update or re-register the "Render Body" menu command.
+   */
   async function updateRenderBodyMenuCommand() {
     if (shouldRenderBodyMenuID !== null)
       GM.unregisterMenuCommand(shouldRenderBodyMenuID);
@@ -94,8 +127,8 @@
       `Turn ${shouldRenderBody ? "Off" : "On"} Render Body Feature`,
       async () => {
         shouldRenderBody = !shouldRenderBody;
-        initMD();
-        await GM.setValue("render_body", shouldRenderBody);
+        initMarkdown();
+        await GM.setValue(RENDER_BODY_KEY, shouldRenderBody);
         console.log(
           `Render Body Feature is now ${shouldRenderBody ? "On" : "Off"}`
         );
@@ -106,11 +139,11 @@
   }
 
   /**
-   * Utilities for token management.
+   * Get GitHub personal access token from storage.
    */
   async function getToken() {
     try {
-      const token = await GM.getValue("github_token", "");
+      const token = await GM.getValue(TOKEN_KEY, "");
       return typeof token === "string" && token.length > 0 ? token : null;
     } catch (e) {
       console.error("Error fetching token:", e);
@@ -119,19 +152,33 @@
   }
 
   /**
-   * Attempts to get the logged-in username using various (robust) selectors.
+   * Prompt user and store GitHub token.
+   */
+  async function configureToken() {
+    try {
+      const val = prompt("GitHub Token", (await getToken()) || "");
+      if (val !== null) {
+        await GM.setValue(TOKEN_KEY, val.trim());
+      }
+    } catch (e) {
+      console.error("Configure token error:", e);
+    }
+  }
+
+  /**
+   * Try to get currently logged-in username from DOM.
    */
   function getUsername() {
     try {
+      // Try meta tags and data-login attributes
       const metaUserLogin = document.querySelector('meta[name="user-login"]');
-      if (metaUserLogin && metaUserLogin.content) return metaUserLogin.content;
+      if (metaUserLogin?.content) return metaUserLogin.content;
       const metaActorLogin = document.querySelector(
         'meta[name="octolytics-actor-login"]'
       );
-      if (metaActorLogin && metaActorLogin.content)
-        return metaActorLogin.content;
+      if (metaActorLogin?.content) return metaActorLogin.content;
       const dataLogin = document.querySelector("[data-login]");
-      if (dataLogin && dataLogin.getAttribute("data-login"))
+      if (dataLogin?.getAttribute("data-login"))
         return dataLogin.getAttribute("data-login");
     } catch (e) {
       console.error("Error detecting username:", e);
@@ -140,47 +187,49 @@
   }
 
   /**
-   * Wait for username in DOM.
+   * Wait for username to be available in DOM.
    */
   function waitForUsername(timeout = 4000) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
-      function poll() {
+      (function poll() {
         const username = getUsername();
-        if (username) {
-          resolve(username);
-        } else if (Date.now() - start > timeout) {
-          reject(new Error("Timed out waiting for username"));
-        } else {
-          setTimeout(poll, 350);
-        }
-      }
-      poll();
+        if (username) return resolve(username);
+        if (Date.now() - start > timeout)
+          return reject(new Error("Timed out waiting for username"));
+        setTimeout(poll, 350);
+      })();
     });
   }
 
   /**
-   * Wait for feed-right-sidebar
+   * Wait for the right sidebar to appear.
    */
-  function waitForSideBar(timeout = 6000) {
+  function waitForSidebar(timeout = 6000) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
-      function check() {
-        const sidebar = document.querySelector(".feed-right-sidebar");
-        if (sidebar) {
-          resolve(sidebar);
-        } else if (Date.now() - start > timeout) {
-          reject(new Error("Timed out waiting for feed-right-sidebar"));
-        } else {
-          setTimeout(check, 300);
+      (function poll() {
+        try {
+          const sidebar = document.querySelector(".feed-right-sidebar");
+          if (sidebar) return resolve(sidebar);
+          if (Date.now() - start > timeout)
+            return reject(
+              new Error("Timed out waiting for feed-right-sidebar")
+            );
+          setTimeout(poll, 300);
+        } catch (e) {
+          reject(e);
         }
-      }
-      check();
+      })();
     });
   }
 
   /**
-   * Fetches received events for a user from GitHub's API, with pagination.
+   * Fetch received events from GitHub API.
+   * @param {string} username - GitHub username
+   * @param {string} token    - GitHub Personal Access Token
+   * @param {number} perPage  - Items per page
+   * @param {number} page     - Page number
    */
   async function fetchReceivedEvents(username, token, perPage = 30, page = 1) {
     const url = `https://api.github.com/users/${encodeURIComponent(
@@ -201,39 +250,52 @@
       }
       const link = res.headers.get("Link");
       let hasNext = false,
-        hasPrev = false,
         lastPage = page;
       if (link) {
         hasNext = /rel="next"/.test(link);
-        hasPrev = /rel="prev"/.test(link);
         const m = link.match(/&page=(\d+)>; rel="last"/);
         if (m) lastPage = parseInt(m[1], 10);
         else lastPage = hasNext ? page + 1 : page;
       }
-      return { events: await res.json(), hasNext, hasPrev, lastPage };
+      return { events: await res.json(), lastPage };
     } catch (error) {
       console.error("Fetch error:", error);
       throw error;
     }
   }
-  function removeOldSection(sectionId = "__gh-dashboard-feed-section__") {
-    const old = document.getElementById(sectionId);
-    if (old) old.remove();
+
+  /**
+   * Remove old section node by ID.
+   */
+  function removeOldSection(sectionId = FEED_SECTION_ID) {
+    try {
+      const old = document.getElementById(sectionId);
+      if (old && old.parentElement) old.parentElement.removeChild(old);
+    } catch {}
   }
+
+  /**
+   * Insert events section into sidebar, replacing older one.
+   */
   function insertEventsSectionSibling(
     cardsWrapper,
     sidebar,
-    sectionId = "__gh-dashboard-feed-section__"
+    sectionId = FEED_SECTION_ID
   ) {
     removeOldSection(sectionId);
     cardsWrapper.id = sectionId;
-    sidebar.appendChild(cardsWrapper);
+    if (sidebar.firstChild) {
+      sidebar.insertBefore(cardsWrapper, sidebar.firstChild);
+    } else {
+      sidebar.appendChild(cardsWrapper);
+    }
   }
+
   /**
-   * Pagination logic for GitHub style feed, compact layout.
+   * Generate array for pagination display.
    */
   function getPaginationDisplay(page, lastPage) {
-    if (lastPage <= 6) {
+    if (lastPage <= PAGINATION_MAX_DISPLAY) {
       return Array.from({ length: lastPage }, (_, i) => i + 1);
     }
     if (page <= 3) {
@@ -259,8 +321,9 @@
     }
     return [1, "...", page - 1, page, page + 1, "...", lastPage];
   }
+
   /**
-   * Render pagination controls (numbers and ellipsis only).
+   * Render pagination controls with numbers and ellipsis.
    */
   function renderPaginationControls({
     page,
@@ -327,7 +390,7 @@
   }
 
   /**
-   * Format date as "now", "5 minutes ago", "3 hours ago", "4 days ago"
+   * Format a date string as a "time ago" label.
    */
   function timeAgo(dateString) {
     const now = new Date();
@@ -351,9 +414,8 @@
   }
 
   /**
-   * Render a GitHub event card.
-   * - If there is short_description_html, render it as HTML.
-   * - If only body, render with markdown-it.
+   * Render an event card element.
+   * @param {object} event - GitHub event object
    */
   async function renderEventCard(event) {
     const { type, repo, actor, created_at, payload } = event;
@@ -373,249 +435,287 @@
 
     // Actor and repo visualization
     const actorLink = actor
-      ? `<a style="font-weight:bold" href="https://github.com/${actor.login}" target="_blank">${actor.login}</a>`
+      ? `<a style="font-weight:bold" href="https://github.com/${encodeURIComponent(
+          actor.login
+        )}" target="_blank" rel="noopener noreferrer">${actor.login}</a>`
       : "";
     const actorAvatar = actor
-      ? `<img src="${actor.avatar_url}" style="width:28px;height:28px;border-radius:50%;margin-right:7px;vertical-align:middle;">`
+      ? `<img src="${actor.avatar_url}" alt="avatar" style="width:28px;height:28px;border-radius:50%;margin-right:7px;vertical-align:middle;">`
       : "";
     const repoLink = repo
-      ? `<a style="font-weight:bold" href="https://github.com/${repo.name}" target="_blank">${repo.name}</a>`
+      ? `<a style="font-weight:bold" href="https://github.com/${encodeURIComponent(
+          repo.name
+        )}" target="_blank" rel="noopener noreferrer">${repo.name}</a>`
       : "";
 
+    /**
+     * Render body or short_description_html.
+     * Always sanitize HTML with DOMPurify.
+     */
     function renderBodyOrShortHtml(body, html) {
-      // Control max width, align after avatar
       return `<div style="max-width:340px;margin-left:35px;overflow-wrap:break-word;">${
         html
-          ? `<div class="event-body-html">${html}</div>`
-          : body
-          ? `<div class="event-body-md">${md.render(body)}</div>`
+          ? `<div class="event-body-html">${DOMPurify.sanitize(html)}</div>`
+          : body && md
+          ? `<div class="event-body-md">${DOMPurify.sanitize(
+              md.render(body)
+            )}</div>`
           : ""
       }</div>`;
     }
 
-    // Compose message based on event type
+    /**
+     * Compose the main content for the event card based on event type.
+     */
     let content = "";
-    switch (type) {
-      case "WatchEvent":
-        content = `${actorAvatar}${actorLink} ${
-          payload.action === "started" ? "starred" : payload.action
-        } ${repoLink}`;
-        break;
-      case "ForkEvent":
-        content = `${actorAvatar}${actorLink} forked <a href="${payload.forkee.html_url}" target="_blank">${payload.forkee.full_name}</a> from ${repoLink}`;
-        break;
-      case "PushEvent": {
-        const commits = payload.commits || [];
-        content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${
-          repo.name
-        }/compare/${payload.before}...${payload.head}" target="_blank">${
-          payload.size
-        } ${payload.size > 1 ? "commits" : "commit"}</a> to ${repoLink}`;
-        if (shouldRenderBody) {
-          if (commits.length > 0) {
+    try {
+      switch (type) {
+        case "WatchEvent":
+          content = `${actorAvatar}${actorLink} ${
+            payload.action === "started" ? "starred" : payload.action
+          } ${repoLink}`;
+          break;
+        case "ForkEvent":
+          content = `${actorAvatar}${actorLink} forked <a href="${
+            payload.forkee.html_url
+          }" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
+            payload.forkee.full_name
+          )}</a> from ${repoLink}`;
+          break;
+        case "PushEvent": {
+          const commits = payload.commits || [];
+          content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${encodeURIComponent(
+            repo.name
+          )}/compare/${payload.before}...${
+            payload.head
+          }" target="_blank" rel="noopener noreferrer">${payload.size} ${
+            payload.size > 1 ? "commits" : "commit"
+          }</a> to ${repoLink}`;
+          if (shouldRenderBody && commits.length > 0 && md) {
             content += `<ul style="margin-top:3px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${commits
               .slice(0, 3)
               .map(
                 (commit) =>
-                  `<li style="font-size:90%">${md.renderInline(commit.message)}
-                    <span style="color:gray">(${commit.author.name})</span>
-                    </li>`
+                  `<li style="font-size:90%">${DOMPurify.sanitize(
+                    md.renderInline(commit.message)
+                  )}<span style="color:gray"> (${DOMPurify.sanitize(
+                    commit.author?.name || ""
+                  )})</span></li>`
               )
               .join("")}</ul>`;
           }
+          break;
         }
-        break;
-      }
-      case "CreateEvent":
-        if (payload.ref_type === "repository") {
-          // Fix: Avoid 'null' for payload.ref, use repo name
-          content = `${actorAvatar}${actorLink} created repository ${repoLink}`;
-        } else {
-          content = `${actorAvatar}${actorLink} created ${
+        case "CreateEvent":
+          if (payload.ref_type === "repository") {
+            content = `${actorAvatar}${actorLink} created repository ${repoLink}`;
+          } else {
+            content = `${actorAvatar}${actorLink} created ${
+              payload.ref_type
+            } <strong>${DOMPurify.sanitize(
+              payload.ref || ""
+            )}</strong> in ${repoLink}`;
+          }
+          break;
+        case "DeleteEvent":
+          content = `${actorAvatar}${actorLink} deleted ${
             payload.ref_type
-          } <strong>${payload.ref || ""}</strong> in ${repoLink}`;
-        }
-        break;
-      case "DeleteEvent":
-        content = `${actorAvatar}${actorLink} deleted ${payload.ref_type} <strong>${payload.ref}</strong> in ${repoLink}`;
-        break;
-      case "PublicEvent":
-        content = `${actorAvatar}${actorLink} open sourced ${repoLink}`;
-        break;
-      case "IssueCommentEvent":
-        if (payload.issue) {
-          content = `${actorAvatar}${actorLink} commented on 
-                    <a href="${payload.issue.html_url}" target="_blank">issue #${payload.issue.number}</a> in ${repoLink}`;
-          if (shouldRenderBody) {
-            if (payload.comment) {
+          } <strong>${DOMPurify.sanitize(payload.ref)}</strong> in ${repoLink}`;
+          break;
+        case "PublicEvent":
+          content = `${actorAvatar}${actorLink} open sourced ${repoLink}`;
+          break;
+        case "IssueCommentEvent":
+          if (payload.issue) {
+            content = `${actorAvatar}${actorLink} commented on 
+                      <a href="${payload.issue.html_url}" target="_blank" rel="noopener noreferrer">issue #${payload.issue.number}</a> in ${repoLink}`;
+            if (shouldRenderBody && payload.comment)
               content += renderBodyOrShortHtml(
                 payload.comment.body,
                 payload.comment.short_description_html
               );
+          }
+          break;
+        case "IssuesEvent":
+          if (payload.issue) {
+            content = `${actorAvatar}${actorLink} ${payload.action} issue
+                    <a href="${payload.issue.html_url}" target="_blank" rel="noopener noreferrer">#${payload.issue.number}</a> in ${repoLink}`;
+            if (shouldRenderBody) {
+              if (payload.issue.short_description_html || payload.issue.body) {
+                content += renderBodyOrShortHtml(
+                  payload.issue.body,
+                  payload.issue.short_description_html
+                );
+              } else if (payload.issue.title && md) {
+                content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${DOMPurify.sanitize(
+                  md.renderInline(payload.issue.title)
+                )}</div>`;
+              }
             }
           }
-        }
-        break;
-      case "IssuesEvent":
-        if (payload.issue) {
-          content = `${actorAvatar}${actorLink} ${payload.action} issue
-                  <a href="${payload.issue.html_url}" target="_blank">#${payload.issue.number}</a> in ${repoLink}`;
-          if (shouldRenderBody) {
-            if (payload.issue.short_description_html || payload.issue.body) {
-              content += renderBodyOrShortHtml(
-                payload.issue.body,
-                payload.issue.short_description_html
-              );
-            } else if (payload.issue.title) {
-              content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${md.renderInline(
-                payload.issue.title
-              )}</div>`;
+          break;
+        case "PullRequestEvent":
+          if (payload.pull_request) {
+            content = `${actorAvatar}${actorLink} ${payload.action} pull request 
+                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">#${payload.pull_request.number}</a> in ${repoLink}`;
+            if (shouldRenderBody) {
+              if (
+                payload.pull_request.short_description_html ||
+                payload.pull_request.body
+              ) {
+                content += renderBodyOrShortHtml(
+                  payload.pull_request.body,
+                  payload.pull_request.short_description_html
+                );
+              } else if (payload.pull_request.title && md) {
+                content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${DOMPurify.sanitize(
+                  md.renderInline(payload.pull_request.title)
+                )}</div>`;
+              }
             }
           }
-        }
-        break;
-      case "PullRequestEvent":
-        if (payload.pull_request) {
-          content = `${actorAvatar}${actorLink} ${payload.action} pull request 
-                  <a href="${payload.pull_request.html_url}" target="_blank">#${payload.pull_request.number}</a> in ${repoLink}`;
-          if (shouldRenderBody) {
-            if (
-              payload.pull_request.short_description_html ||
-              payload.pull_request.body
-            ) {
-              content += renderBodyOrShortHtml(
-                payload.pull_request.body,
-                payload.pull_request.short_description_html
-              );
-            } else if (payload.pull_request.title) {
-              content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${md.renderInline(
-                payload.pull_request.title
-              )}</div>`;
-            }
-          }
-        }
-        break;
-      case "PullRequestReviewEvent":
-        if (payload.pull_request) {
-          content = `${actorAvatar}${actorLink} reviewed pull request 
-                  <a href="${payload.pull_request.html_url}" target="_blank">#${payload.pull_request.number}</a> in ${repoLink}`;
-          if (shouldRenderBody) {
-            if (payload.review) {
+          break;
+        case "PullRequestReviewEvent":
+          if (payload.pull_request) {
+            content = `${actorAvatar}${actorLink} reviewed pull request 
+                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">#${payload.pull_request.number}</a> in ${repoLink}`;
+            if (shouldRenderBody && payload.review)
               content += renderBodyOrShortHtml(
                 payload.review.body,
                 payload.review.short_description_html
               );
-            }
           }
-        }
-        break;
-      case "PullRequestReviewCommentEvent":
-        if (payload.pull_request) {
-          content = `${actorAvatar}${actorLink} commented on pull request 
-                  <a href="${payload.pull_request.html_url}" target="_blank">#${payload.pull_request.number}</a> in ${repoLink}`;
-          if (shouldRenderBody) {
-            if (payload.comment) {
+          break;
+        case "PullRequestReviewCommentEvent":
+          if (payload.pull_request) {
+            content = `${actorAvatar}${actorLink} commented on pull request 
+                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">#${payload.pull_request.number}</a> in ${repoLink}`;
+            if (shouldRenderBody && payload.comment)
               content += renderBodyOrShortHtml(
                 payload.comment.body,
                 payload.comment.short_description_html
               );
+          }
+          break;
+        case "CommitCommentEvent":
+          if (payload.comment && payload.comment.html_url) {
+            content = `${actorAvatar}${actorLink} commented on 
+                    <a href="${payload.comment.html_url}" target="_blank" rel="noopener noreferrer">a commit</a> in ${repoLink}`;
+            if (shouldRenderBody)
+              content += renderBodyOrShortHtml(
+                payload.comment.body,
+                payload.comment.short_description_html
+              );
+          }
+          break;
+        case "MemberEvent":
+          if (payload.member) {
+            content = `${actorAvatar}${actorLink} added <a href="https://github.com/${encodeURIComponent(
+              payload.member.login
+            )}" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
+              payload.member.login
+            )}</a> to ${repoLink}`;
+          }
+          break;
+        case "GollumEvent":
+          if (payload.pages && payload.pages[0]) {
+            content = `${actorAvatar}${actorLink} edited wiki in ${repoLink}`;
+            if (shouldRenderBody && md) {
+              content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">Page: ${DOMPurify.sanitize(
+                md.renderInline(payload.pages[0].title)
+              )}</div>`;
             }
           }
-        }
-        break;
-      case "CommitCommentEvent":
-        if (payload.comment && payload.comment.html_url) {
-          content = `${actorAvatar}${actorLink} commented on 
-                  <a href="${payload.comment.html_url}" target="_blank">a commit</a> in ${repoLink}`;
-          if (shouldRenderBody) {
-            content += renderBodyOrShortHtml(
-              payload.comment.body,
-              payload.comment.short_description_html
-            );
+          break;
+        case "ReleaseEvent":
+          if (payload.release) {
+            content = `${actorAvatar}${actorLink} ${payload.action} release 
+                  <a href="${
+                    payload.release.html_url
+                  }" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
+              payload.release.name || payload.release.tag_name
+            )}</a> in ${repoLink}`;
+            if (shouldRenderBody)
+              content += renderBodyOrShortHtml(
+                payload.release.body,
+                payload.release.short_description_html
+              );
           }
-        }
-        break;
-      case "MemberEvent":
-        if (payload.member) {
-          content = `${actorAvatar}${actorLink} added <a href="https://github.com/${payload.member.login}" target="_blank">${payload.member.login}</a> to ${repoLink}`;
-        }
-        break;
-      case "GollumEvent":
-        if (payload.pages && payload.pages[0]) {
-          content = `${actorAvatar}${actorLink} edited wiki in ${repoLink}`;
-          if (shouldRenderBody) {
-            content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">Page: ${md.renderInline(
-              payload.pages[0].title
-            )}</div>`;
-          }
-        }
-        break;
-      case "ReleaseEvent":
-        content = `${actorAvatar}${actorLink} ${payload.action} release 
-                <a href="${payload.release.html_url}" target="_blank">${
-          payload.release.name || payload.release.tag_name
-        }</a>
-                in ${repoLink}`;
-        if (shouldRenderBody) {
-          content += renderBodyOrShortHtml(
-            payload.release.body,
-            payload.release.short_description_html
-          );
-        }
-        break;
-      case "SponsorshipEvent":
-        content = `${actorAvatar}${actorLink} sponsored or received a sponsorship.`;
-        break;
-      default:
-        content = `${actorAvatar}${actorLink} did <code>${type}</code> in ${repoLink}`;
+          break;
+        case "SponsorshipEvent":
+          content = `${actorAvatar}${actorLink} sponsored or received a sponsorship.`;
+          break;
+        default:
+          content = `${actorAvatar}${actorLink} did <code>${DOMPurify.sanitize(
+            type
+          )}</code> in ${repoLink}`;
+      }
+    } catch (e) {
+      content =
+        actorAvatar +
+        actorLink +
+        " [Render error] " +
+        (repoLink || "") +
+        " " +
+        DOMPurify.sanitize(type || "");
     }
+
+    // Format date
     const date = timeAgo(created_at);
-    card.innerHTML = DOMPurify.sanitize(`<div>${content}</div>
-        <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`);
+
+    // Render card
+    card.innerHTML = DOMPurify.sanitize(
+      `<div>${content}</div>
+      <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`
+    );
     return card;
   }
 
+  // ---- Entrypoint begins ----
+
   try {
-    const FEED_SECTION_ID = "__gh-dashboard-feed-section__";
-
+    // Step 1: Setup state and menu
     rewriteConsole();
-    initMD();
+    shouldRenderBody = await GM.getValue(RENDER_BODY_KEY, false);
+    initMarkdown();
 
-    GM.registerMenuCommand("Configure GitHub Token", async () => {
-      let val = prompt("GitHub Token", (await getToken()) || "");
-      if (val !== null) {
-        await GM.setValue("github_token", val || "");
-      }
-    });
-
+    GM.registerMenuCommand("Configure GitHub Token", configureToken);
     await updateRenderBodyMenuCommand();
 
+    // Step 2: Get token
     const token = await getToken();
     if (!token) {
       console.warn("No token configured, skipping.");
       return;
     }
 
+    // Step 3: Wait for username and sidebar
     const [username, sidebar] = await Promise.all([
       waitForUsername(),
-      waitForSideBar(),
+      waitForSidebar(),
     ]);
     if (!username) {
       console.warn("Could not find username, skipping.");
       return;
     }
+
+    // Step 4: Render feed with pagination
     let currentPage = 1;
     const perPage = 25;
+
     async function render(page) {
-      let events, lastPage;
+      let events = [],
+        lastPage = page;
       try {
         const data = await fetchReceivedEvents(username, token, perPage, page);
-        events = data.events;
+        events = Array.isArray(data.events) ? data.events : [];
         lastPage = data.lastPage;
       } catch (e) {
         events = [];
         lastPage = page;
       }
+
+      // Cards section
       const cardsSection = document.createElement("div");
       cardsSection.style.display = "flex";
       cardsSection.style.flexDirection = "column";
@@ -623,6 +723,7 @@
       cardsSection.style.gap = "0 2px";
       cardsSection.style.minHeight = "420px";
 
+      // Header
       const header = document.createElement("div");
       header.style.display = "flex";
       header.style.justifyContent = "flex-start";
@@ -630,6 +731,7 @@
       header.innerHTML = `<h3 style="font-size:18px;font-weight:600;margin:0 5px 16px 0">Your Received Events</h3>`;
       cardsSection.append(header);
 
+      // Cards row
       const cardsRow = document.createElement("div");
       cardsRow.style.display = "flex";
       cardsRow.style.flexWrap = "wrap";
@@ -638,7 +740,7 @@
       cardsRow.style.boxSizing = "border-box";
       cardsRow.style.minHeight = "330px";
 
-      if (!Array.isArray(events) || events.length === 0) {
+      if (events.length === 0) {
         cardsRow.innerHTML =
           '<div style="color:#888;padding:12px">No events</div>';
       } else {
@@ -651,6 +753,7 @@
       }
       cardsSection.appendChild(cardsRow);
 
+      // Pagination
       cardsSection.appendChild(
         renderPaginationControls({
           page,
@@ -665,8 +768,10 @@
         })
       );
 
+      // Insert section
       insertEventsSectionSibling(cardsSection, sidebar, FEED_SECTION_ID);
     }
+
     render(currentPage);
   } catch (e) {
     console.error("Unexpected failure:", e);
