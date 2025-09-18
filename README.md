@@ -6,7 +6,7 @@ Some time ago, that project stopped working[^3][^4][^5] because GitHub replaced 
 
 I had to look for a new solution. Luckily, there’s still a [GitHub API](https://docs.github.com/en/rest/activity/events#list-events-received-by-the-authenticated-user) that can provide similar functionality. After a bit of relaxed vibe coding (thanks to Copilot and GPT), I built an initial version. It’s still very early, but already good enough for me to use.
 
-I’ll keep iterating on the code as I use it, mainly to handle edge cases and strengthen security (right now I’m sure it’s not good enough - the dependency haven’t been audited, I haven’t found a way to lock it like [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity), and the rendering code makes me uneasy).
+I’ll keep iterating on the code as I use it, mainly to handle edge cases and strengthen security (right now I’m sure it’s not good enough - the dependency haven’t been audited, I haven’t found a way to lock it like [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)[^8], and the rendering code makes me uneasy).
 
 ## Usage
 
@@ -37,3 +37,4 @@ I’ll keep iterating on the code as I use it, mainly to handle edge cases and s
 [^5]: https://github.com/wangrongding/github-old-feed/issues/15
 [^6]: https://github.blog/changelog/2024-11-08-upcoming-changes-to-data-retention-for-events-api-atom-feed-timeline-and-dashboard-feed-features/
 [^7]: https://github.com/orgs/community/discussions/137289
+[^8]: https://github.com/violentmonkey/violentmonkey/issues/1558
