@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.7.2
+// @version      0.8.0
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -414,6 +414,66 @@
   }
 
   /**
+   * Render reactions bar if reactions exist on target object.
+   * @param {object} reactions - reactions object from GitHub API
+   * @returns {HTMLElement|null} A DOM node to display reactions, or null if none
+   */
+  function renderReactionsBar(reactions) {
+    // Only show if at least one reaction count > 0
+    if (!reactions) return null;
+    const reactionMeta = [
+      { key: "+1", emoji: "👍", label: "Thumbs up" },
+      { key: "-1", emoji: "👎", label: "Thumbs down" },
+      { key: "laugh", emoji: "😄", label: "Laugh" },
+      { key: "hooray", emoji: "🎉", label: "Hooray" },
+      { key: "confused", emoji: "😕", label: "Confused" },
+      { key: "heart", emoji: "❤️", label: "Heart" },
+      { key: "rocket", emoji: "🚀", label: "Rocket" },
+      { key: "eyes", emoji: "👀", label: "Eyes" },
+    ];
+    let hasAny = false;
+    for (const meta of reactionMeta) {
+      if (reactions[meta.key] > 0) {
+        hasAny = true;
+        break;
+      }
+    }
+    if (!hasAny) return null;
+
+    // Style: similar to GitHub's reactions bar in issues/comments
+    const bar = document.createElement("div");
+    bar.className = "gh-dashboard-reactions-bar";
+    bar.style.display = "flex";
+    bar.style.flexWrap = "wrap";
+    bar.style.gap = "4px";
+    bar.style.margin = "4px 0 0 35px";
+    bar.style.alignItems = "center";
+    for (const meta of reactionMeta) {
+      const count = reactions[meta.key];
+      if (count > 0) {
+        // Use button for cursor and accessibility, but disabled
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.disabled = true;
+        btn.className = "btn btn-sm btn-reaction";
+        btn.setAttribute("aria-label", `${count} ${meta.label}`);
+        btn.style.display = "inline-flex";
+        btn.style.alignItems = "center";
+        btn.style.background = "#f6f8fa";
+        btn.style.border = "1px solid #d0d7de";
+        btn.style.borderRadius = "16px";
+        btn.style.fontSize = "13px";
+        btn.style.padding = "2px 7px";
+        btn.style.color = "#57606a";
+        btn.style.cursor = "not-allowed";
+        btn.innerHTML = `<span style="font-size:15px;line-height:1">${meta.emoji}</span> <span style="margin-left:2px">${count}</span>`;
+        bar.appendChild(btn);
+      }
+    }
+    return bar;
+  }
+
+  /**
    * Render an event card element.
    * @param {object} event - GitHub event object
    */
@@ -453,7 +513,11 @@
      * Always sanitize HTML with DOMPurify.
      */
     function renderBodyOrShortHtml(body, html) {
-      return `<div style="max-width:340px;margin-left:35px;overflow-wrap:break-word;">${
+      if (!shouldRenderBody) {
+        return "";
+      }
+
+      let htmlContent = `<div style="max-width:340px;margin-left:35px;overflow-wrap:break-word;">${
         html
           ? `<div class="event-body-html">${DOMPurify.sanitize(html)}</div>`
           : body && md
@@ -462,6 +526,7 @@
             )}</div>`
           : ""
       }</div>`;
+      return htmlContent;
     }
 
     /**
@@ -470,20 +535,25 @@
     let content = "";
     try {
       switch (type) {
-        case "WatchEvent":
+        case "WatchEvent": {
           content = `${actorAvatar}${actorLink} ${
             payload.action === "started" ? "starred" : payload.action
           } ${repoLink}`;
           break;
-        case "ForkEvent":
+        }
+
+        case "ForkEvent": {
           content = `${actorAvatar}${actorLink} forked <a href="${
             payload.forkee.html_url
           }" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
             payload.forkee.full_name
           )}</a> from ${repoLink}`;
           break;
+        }
+
         case "PushEvent": {
           const commits = payload.commits || [];
+
           content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${encodeURIComponent(
             repo.name
           )}/compare/${payload.before}...${
@@ -491,22 +561,29 @@
           }" target="_blank" rel="noopener noreferrer">${payload.size} ${
             payload.size > 1 ? "commits" : "commit"
           }</a> to ${repoLink}`;
-          if (shouldRenderBody && commits.length > 0 && md) {
-            content += `<ul style="margin-top:3px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${commits
-              .slice(0, 3)
-              .map(
-                (commit) =>
-                  `<li style="font-size:90%">${DOMPurify.sanitize(
-                    md.renderInline(commit.message)
-                  )}<span style="color:gray"> (${DOMPurify.sanitize(
-                    commit.author?.name || ""
-                  )})</span></li>`
-              )
-              .join("")}</ul>`;
+
+          if (commits.length > 0) {
+            let list = [];
+            for (const commit of commits.slice(0, 9)) {
+              const messages = commit.message.split("\n");
+              const message =
+                messages.length === 0
+                  ? ""
+                  : messages.length === 1
+                  ? messages[0]
+                  : messages[0] + " ...";
+              list.push(
+                `- **[${commit.sha.substring(0, 7)}](https://github.com/${
+                  repo.name
+                }/commit/${commit.sha})**: ${message}`
+              );
+            }
+            content += renderBodyOrShortHtml(list.join("\n"), null);
           }
           break;
         }
-        case "CreateEvent":
+
+        case "CreateEvent": {
           if (payload.ref_type === "repository") {
             content = `${actorAvatar}${actorLink} created repository ${repoLink}`;
           } else {
@@ -517,134 +594,174 @@
             )}</strong> in ${repoLink}`;
           }
           break;
-        case "DeleteEvent":
+        }
+
+        case "DeleteEvent": {
           content = `${actorAvatar}${actorLink} deleted ${
             payload.ref_type
           } <strong>${DOMPurify.sanitize(payload.ref)}</strong> in ${repoLink}`;
           break;
-        case "PublicEvent":
+        }
+
+        case "PublicEvent": {
           content = `${actorAvatar}${actorLink} open sourced ${repoLink}`;
           break;
-        case "IssueCommentEvent":
-          if (payload.issue) {
-            content = `${actorAvatar}${actorLink} commented on 
-                      <a href="${payload.issue.html_url}" target="_blank" rel="noopener noreferrer">issue #${payload.issue.number}</a> in ${repoLink}`;
-            if (shouldRenderBody && payload.comment)
-              content += renderBodyOrShortHtml(
-                payload.comment.body,
-                payload.comment.short_description_html
-              );
+        }
+
+        case "IssueCommentEvent": {
+          content = `${actorAvatar}${actorLink} commented on 
+                      <a href="${payload.comment.html_url}" target="_blank" rel="noopener noreferrer">issue #${payload.issue.number}</a> in ${repoLink}`;
+
+          content += renderBodyOrShortHtml(payload.comment.body, null);
+
+          const bar = renderReactionsBar(payload.comment.reactions);
+          if (bar) {
+            content += bar.outerHTML;
           }
+
           break;
-        case "IssuesEvent":
-          if (payload.issue) {
-            content = `${actorAvatar}${actorLink} ${payload.action} issue
-                    <a href="${payload.issue.html_url}" target="_blank" rel="noopener noreferrer">#${payload.issue.number}</a> in ${repoLink}`;
-            if (shouldRenderBody) {
-              if (payload.issue.short_description_html || payload.issue.body) {
-                content += renderBodyOrShortHtml(
-                  payload.issue.body,
-                  payload.issue.short_description_html
-                );
-              } else if (payload.issue.title && md) {
-                content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${DOMPurify.sanitize(
-                  md.renderInline(payload.issue.title)
-                )}</div>`;
-              }
+        }
+
+        case "IssuesEvent": {
+          content = `${actorAvatar}${actorLink} ${payload.action}
+                    <a href="${payload.issue.html_url}" target="_blank" rel="noopener noreferrer">issue #${payload.issue.number}</a> in ${repoLink}`;
+
+          content += renderBodyOrShortHtml(
+            `##### ${payload.issue.title}`,
+            null
+          );
+
+          const bar = renderReactionsBar(payload.issue.reactions);
+          if (bar) {
+            content += bar.outerHTML;
+          }
+
+          break;
+        }
+
+        case "PullRequestEvent": {
+          content = `${actorAvatar}${actorLink} ${payload.action} 
+                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">pull request #${payload.pull_request.number}</a> in ${repoLink}`;
+
+          content += renderBodyOrShortHtml(
+            `##### ${payload.pull_request.title}` +
+              "\n" +
+              payload.pull_request.body,
+            null
+          );
+
+          const bar = renderReactionsBar(payload.pull_request.reactions);
+          if (bar) {
+            content += bar.outerHTML;
+          }
+
+          break;
+        }
+
+        case "PullRequestReviewEvent": {
+          content = `${actorAvatar}${actorLink} reviewed 
+                    <a href="${payload.review.html_url}" target="_blank" rel="noopener noreferrer">pull request #${payload.pull_request.number}</a> in ${repoLink}`;
+
+          content += renderBodyOrShortHtml(
+            `##### ${payload.pull_request.title}` + "\n" + payload.review.body,
+            null
+          );
+
+          const bar = renderReactionsBar(payload.review.reactions);
+          if (bar) {
+            content += bar.outerHTML;
+          }
+
+          break;
+        }
+
+        case "PullRequestReviewCommentEvent": {
+          content = `${actorAvatar}${actorLink} commented on 
+                    <a href="${payload.comment.html_url}" target="_blank" rel="noopener noreferrer">pull request #${payload.pull_request.number}</a> in ${repoLink}`;
+
+          content += renderBodyOrShortHtml(
+            `##### ${payload.pull_request.title}` + "\n" + payload.comment.body,
+            null
+          );
+
+          const bar = renderReactionsBar(payload.comment.reactions);
+          if (bar) {
+            content += bar.outerHTML;
+          }
+
+          break;
+        }
+
+        case "CommitCommentEvent": {
+          content = `${actorAvatar}${actorLink} commented on 
+                    <a href="${
+                      payload.comment.html_url
+                    }" target="_blank" rel="noopener noreferrer">commit ${payload.comment.commit_id.substring(
+            0,
+            7
+          )}</a> in ${repoLink}`;
+
+          content += renderBodyOrShortHtml(payload.comment.body, null);
+
+          const bar = renderReactionsBar(payload.comment.reactions);
+          if (bar) {
+            content += bar.outerHTML;
+          }
+
+          break;
+        }
+
+        case "MemberEvent": {
+          content = `${actorAvatar}${actorLink} added <a href="https://github.com/${encodeURIComponent(
+            payload.member.login
+          )}" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
+            payload.member.login
+          )}</a> to ${repoLink}`;
+
+          break;
+        }
+
+        case "GollumEvent": {
+          content = `${actorAvatar}${actorLink} edited wiki in ${repoLink}`;
+
+          const pages = payload.pages || [];
+
+          if (pages.length > 0) {
+            let list = [];
+            for (const page of pages.slice(0, 9)) {
+              list.push(
+                `- ${page.action} [${page.page_name}](${page.html_url})`
+              );
             }
+            content += renderBodyOrShortHtml(list.join("\n"), null);
           }
+
           break;
-        case "PullRequestEvent":
-          if (payload.pull_request) {
-            content = `${actorAvatar}${actorLink} ${payload.action} pull request 
-                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">#${payload.pull_request.number}</a> in ${repoLink}`;
-            if (shouldRenderBody) {
-              if (
-                payload.pull_request.short_description_html ||
-                payload.pull_request.body
-              ) {
-                content += renderBodyOrShortHtml(
-                  payload.pull_request.body,
-                  payload.pull_request.short_description_html
-                );
-              } else if (payload.pull_request.title && md) {
-                content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">${DOMPurify.sanitize(
-                  md.renderInline(payload.pull_request.title)
-                )}</div>`;
-              }
-            }
-          }
-          break;
-        case "PullRequestReviewEvent":
-          if (payload.pull_request) {
-            content = `${actorAvatar}${actorLink} reviewed pull request 
-                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">#${payload.pull_request.number}</a> in ${repoLink}`;
-            if (shouldRenderBody && payload.review)
-              content += renderBodyOrShortHtml(
-                payload.review.body,
-                payload.review.short_description_html
-              );
-          }
-          break;
-        case "PullRequestReviewCommentEvent":
-          if (payload.pull_request) {
-            content = `${actorAvatar}${actorLink} commented on pull request 
-                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">#${payload.pull_request.number}</a> in ${repoLink}`;
-            if (shouldRenderBody && payload.comment)
-              content += renderBodyOrShortHtml(
-                payload.comment.body,
-                payload.comment.short_description_html
-              );
-          }
-          break;
-        case "CommitCommentEvent":
-          if (payload.comment && payload.comment.html_url) {
-            content = `${actorAvatar}${actorLink} commented on 
-                    <a href="${payload.comment.html_url}" target="_blank" rel="noopener noreferrer">a commit</a> in ${repoLink}`;
-            if (shouldRenderBody)
-              content += renderBodyOrShortHtml(
-                payload.comment.body,
-                payload.comment.short_description_html
-              );
-          }
-          break;
-        case "MemberEvent":
-          if (payload.member) {
-            content = `${actorAvatar}${actorLink} added <a href="https://github.com/${encodeURIComponent(
-              payload.member.login
-            )}" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
-              payload.member.login
-            )}</a> to ${repoLink}`;
-          }
-          break;
-        case "GollumEvent":
-          if (payload.pages && payload.pages[0]) {
-            content = `${actorAvatar}${actorLink} edited wiki in ${repoLink}`;
-            if (shouldRenderBody && md) {
-              content += `<div style="font-size:90%;margin-top:2px;max-width:340px;margin-left:35px;overflow-wrap:break-word;">Page: ${DOMPurify.sanitize(
-                md.renderInline(payload.pages[0].title)
-              )}</div>`;
-            }
-          }
-          break;
-        case "ReleaseEvent":
-          if (payload.release) {
-            content = `${actorAvatar}${actorLink} ${payload.action} release 
+        }
+
+        case "ReleaseEvent": {
+          content = `${actorAvatar}${actorLink} ${payload.action} 
                   <a href="${
                     payload.release.html_url
-                  }" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
-              payload.release.name || payload.release.tag_name
-            )}</a> in ${repoLink}`;
-            if (shouldRenderBody)
-              content += renderBodyOrShortHtml(
-                payload.release.body,
-                payload.release.short_description_html
-              );
+                  }" target="_blank" rel="noopener noreferrer">release ${DOMPurify.sanitize(
+            payload.release.name || payload.release.tag_name
+          )}</a> in ${repoLink}`;
+
+          content += renderBodyOrShortHtml(payload.release.body, null);
+
+          const bar = renderReactionsBar(payload.release.reactions);
+          if (bar) {
+            content += bar.outerHTML;
           }
+
           break;
-        case "SponsorshipEvent":
+        }
+
+        case "SponsorshipEvent": {
           content = `${actorAvatar}${actorLink} sponsored or received a sponsorship.`;
           break;
+        }
+
         default:
           content = `${actorAvatar}${actorLink} did <code>${DOMPurify.sanitize(
             type
