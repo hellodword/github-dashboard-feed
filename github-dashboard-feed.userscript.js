@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.8.0
+// @version      0.8.1
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -26,20 +26,60 @@
   // Constants
   const FEED_SECTION_ID = "__gh-dashboard-feed-section__";
   const TOKEN_KEY = "github_token";
-  const RENDER_BODY_KEY = "render_body";
+  const RENDER_BODY_KEY = "render_body_enabled";
+  const ACTOR_FILTER_KEY = "actor_filter_enabled";
   const PAGINATION_MAX_DISPLAY = 6;
   const NOTIFICATION_MAX_LENGTH = 200;
 
+  /**
+   * List of actor filter rules.
+   * Each object can have one or more of: id, login, display_login.
+   * If an event's actor matches any property of any rule (===), the event will be filtered out if filtering is enabled.
+   */
+  const ACTOR_FILTER_LIST = [
+    {
+      login: "GitHub Enterprise",
+      display_login: "GitHub Enterprise",
+    },
+    {
+      id: 49699333,
+      login: "dependabot[bot]",
+    },
+    {
+      id: 27856297,
+      login: "dependabot-preview[bot]",
+      display_login: "dependabot-preview[bot]",
+    },
+    {
+      id: 41898282,
+      login: "github-actions[bot]",
+      display_login: "github-actions[bot]",
+    },
+    {
+      login: "GitHub Action",
+      display_login: "actions-user",
+    },
+    {
+      display_login: "dependabot support",
+    },
+    {
+      login: "web-flow",
+      display_login: "web-flow",
+    },
+  ];
+
   // State
-  let shouldRenderBody = false;
-  let shouldRenderBodyMenuID = null;
+  let renderBodyEnabled = false;
+  let renderBodyMenuID = null;
+  let actorFilterEnabled = true;
+  let actorFilterMenuID = null;
   let md = null;
 
   /**
    * Initialize markdown engine if needed.
    */
   function initMarkdown() {
-    if (shouldRenderBody && !md) {
+    if (renderBodyEnabled && !md) {
       md = window.markdownit({
         html: false, // Strictly disallow raw HTML for safety
         linkify: true,
@@ -118,23 +158,42 @@
 
   /**
    * Update or re-register the "Render Body" menu command.
+   * Allows user to toggle whether markdown body is rendered in event cards.
    */
   async function updateRenderBodyMenuCommand() {
-    if (shouldRenderBodyMenuID !== null)
-      GM.unregisterMenuCommand(shouldRenderBodyMenuID);
+    if (renderBodyMenuID !== null) GM.unregisterMenuCommand(renderBodyMenuID);
 
-    shouldRenderBodyMenuID = GM.registerMenuCommand(
-      `Turn ${shouldRenderBody ? "Off" : "On"} Render Body Feature`,
+    renderBodyMenuID = GM.registerMenuCommand(
+      `Turn ${renderBodyEnabled ? "Off" : "On"} Render Body Feature`,
       async () => {
-        shouldRenderBody = !shouldRenderBody;
+        renderBodyEnabled = !renderBodyEnabled;
         initMarkdown();
-        await GM.setValue(RENDER_BODY_KEY, shouldRenderBody);
+        await GM.setValue(RENDER_BODY_KEY, renderBodyEnabled);
         console.log(
-          `Render Body Feature is now ${shouldRenderBody ? "On" : "Off"}`
+          `Render Body Feature is now ${renderBodyEnabled ? "On" : "Off"}`
         );
         await updateRenderBodyMenuCommand();
       },
       "t"
+    );
+  }
+
+  /**
+   * Update or re-register the "Actor Filter" menu command.
+   * Allows user to toggle whether actor-based event filtering is enabled.
+   */
+  async function updateActorFilterMenuCommand() {
+    if (actorFilterMenuID !== null) GM.unregisterMenuCommand(actorFilterMenuID);
+
+    actorFilterMenuID = GM.registerMenuCommand(
+      `Turn ${actorFilterEnabled ? "Off" : "On"} Actor Filter`,
+      async () => {
+        actorFilterEnabled = !actorFilterEnabled;
+        await GM.setValue(ACTOR_FILTER_KEY, actorFilterEnabled);
+        console.log(`Actor Filter is now ${actorFilterEnabled ? "On" : "Off"}`);
+        await updateActorFilterMenuCommand();
+      },
+      "a"
     );
   }
 
@@ -474,6 +533,23 @@
   }
 
   /**
+   * Return true if the given actor matches any filter rule.
+   * If any property in a filter rule matches the corresponding property in actor (===), returns true.
+   * @param {object} actor - The event's actor object
+   */
+  function isActorFiltered(actor) {
+    if (!actor) return false;
+    for (const rule of ACTOR_FILTER_LIST) {
+      for (const key of Object.keys(rule)) {
+        if (actor[key] === rule[key]) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
    * Render an event card element.
    * @param {object} event - GitHub event object
    */
@@ -513,7 +589,7 @@
      * Always sanitize HTML with DOMPurify.
      */
     function renderBodyOrShortHtml(body, html) {
-      if (!shouldRenderBody) {
+      if (!renderBodyEnabled) {
         return "";
       }
 
@@ -793,11 +869,13 @@
   try {
     // Step 1: Setup state and menu
     rewriteConsole();
-    shouldRenderBody = await GM.getValue(RENDER_BODY_KEY, false);
+    renderBodyEnabled = await GM.getValue(RENDER_BODY_KEY, false);
+    actorFilterEnabled = await GM.getValue(ACTOR_FILTER_KEY, true);
     initMarkdown();
 
     GM.registerMenuCommand("Configure GitHub Token", configureToken);
     await updateRenderBodyMenuCommand();
+    await updateActorFilterMenuCommand();
 
     // Step 2: Get token
     const token = await getToken();
@@ -830,6 +908,15 @@
       } catch (e) {
         events = [];
         lastPage = page;
+      }
+
+      /**
+       * Apply actor filter if enabled.
+       * If actorFilterEnabled is true, filter out any event whose actor matches a rule.
+       * Otherwise, display all events.
+       */
+      if (actorFilterEnabled) {
+        events = events.filter((ev) => !isActorFiltered(ev.actor));
       }
 
       // Cards section
