@@ -10,6 +10,13 @@ I’ll keep iterating on the code as I use it, mainly to handle edge cases and s
 
 ## Usage
 
+Tested environments:
+
+- Firefox 143+
+- ViolentMonkey 2.31.0
+
+I’m not sure if it will run properly in other environments, but issues and PRs are welcome!
+
 1. Create a personal access token, select **All repositories**, no permissions required: [https://github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
 
 2. After installing the userscript, refresh the GitHub. Then, in the Violentmonkey toolbar, you’ll see the **Configure GitHub Token** menu — click it to configure.
