@@ -6,16 +6,13 @@ Some time ago, that project stopped working[^3][^4][^5] because GitHub replaced 
 
 I had to look for a new solution. Luckily, there’s still a [GitHub API](https://docs.github.com/en/rest/activity/events#list-events-received-by-the-authenticated-user) that can provide similar functionality. After a bit of relaxed vibe coding (thanks to Copilot and GPT), I built an initial version. It’s still very early, but already good enough for me to use.
 
-I’ll keep iterating on the code as I use it, mainly to handle edge cases and strengthen security (right now I’m sure it’s not good enough - the dependency haven’t been audited, I haven’t found a way to lock it like [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity)[^8], and the rendering code makes me uneasy).
+## Warnings
+
+- **Tested only in Firefox >=143.0 and ViolentMonkey >=2.31.0.** I’m not sure if it will run properly in other environments, but issues and PRs are welcome!
+- ViolentMonkey currently lacks a mechanism similar to [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity), so there’s no way to mitigate the supply chain attack risk from CDN services used in `@require`. We’ll have to wait for an upstream solution[^8].
+- By default, the body is not rendered. When enabled, it uses `DOMPurify` to sanitize the generated HTML, but there are still risks, please refer to [DOMPurify's Security Goals & Threat Model](https://github.com/cure53/DOMPurify/wiki/Security-Goals-&-Threat-Model).
 
 ## Usage
-
-Tested environments:
-
-- Firefox 143+
-- ViolentMonkey 2.31.0
-
-I’m not sure if it will run properly in other environments, but issues and PRs are welcome!
 
 1. Create a personal access token, select **All repositories**, no permissions required: [https://github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
 
