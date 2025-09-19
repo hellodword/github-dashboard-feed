@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.8.1
+// @version      0.8.2
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -579,9 +579,7 @@
       ? `<img src="${actor.avatar_url}" alt="avatar" style="width:28px;height:28px;border-radius:50%;margin-right:7px;vertical-align:middle;">`
       : "";
     const repoLink = repo
-      ? `<a style="font-weight:bold" href="https://github.com/${encodeURIComponent(
-          repo.name
-        )}" target="_blank" rel="noopener noreferrer">${repo.name}</a>`
+      ? `<a style="font-weight:bold" href="https://github.com/${repo.name}" target="_blank" rel="noopener noreferrer">${repo.name}</a>`
       : "";
 
     /**
@@ -630,9 +628,9 @@
         case "PushEvent": {
           const commits = payload.commits || [];
 
-          content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${encodeURIComponent(
+          content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${
             repo.name
-          )}/compare/${payload.before}...${
+          }/compare/${payload.before}...${
             payload.head
           }" target="_blank" rel="noopener noreferrer">${payload.size} ${
             payload.size > 1 ? "commits" : "commit"
