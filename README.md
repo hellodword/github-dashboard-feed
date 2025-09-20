@@ -24,6 +24,8 @@ I had to look for a new solution. Luckily, there’s still a [GitHub API](https:
 
 ## Screenshot
 
+> Pretend I’m microsoft :)
+
 <p align="center">
   <img src="images/screenshot.jpeg" />
 </p>
