@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.8.2
+// @version      0.8.4
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -20,31 +20,25 @@
 // ==/UserScript==
 
 /**
- * Entrypoint: main logic wrapped in IIFE.
+ * Entrypoint: main logic wrapped in an IIFE.
  */
 (async function main() {
-  // Constants
+  // ================== CONSTANTS ==================
   const FEED_SECTION_ID = "__gh-dashboard-feed-section__";
   const TOKEN_KEY = "github_token";
   const RENDER_BODY_KEY = "render_body_enabled";
   const ACTOR_FILTER_KEY = "actor_filter_enabled";
-  const PAGINATION_MAX_DISPLAY = 6;
   const NOTIFICATION_MAX_LENGTH = 200;
+  const PER_PAGE = 25;
 
   /**
-   * List of actor filter rules.
-   * Each object can have one or more of: id, login, display_login.
+   * Actor filter rules.
+   * Each object may contain one or more of: id, login, display_login.
    * If an event's actor matches any property of any rule (===), the event will be filtered out if filtering is enabled.
    */
   const ACTOR_FILTER_LIST = [
-    {
-      login: "GitHub Enterprise",
-      display_login: "GitHub Enterprise",
-    },
-    {
-      id: 49699333,
-      login: "dependabot[bot]",
-    },
+    { login: "GitHub Enterprise", display_login: "GitHub Enterprise" },
+    { id: 49699333, login: "dependabot[bot]" },
     {
       id: 27856297,
       login: "dependabot-preview[bot]",
@@ -55,33 +49,35 @@
       login: "github-actions[bot]",
       display_login: "github-actions[bot]",
     },
-    {
-      login: "GitHub Action",
-      display_login: "actions-user",
-    },
-    {
-      display_login: "dependabot support",
-    },
-    {
-      login: "web-flow",
-      display_login: "web-flow",
-    },
+    { login: "GitHub Action", display_login: "actions-user" },
+    { display_login: "dependabot support" },
+    { login: "web-flow", display_login: "web-flow" },
   ];
 
-  // State
+  // ================== STATE VARIABLES ==================
   let renderBodyEnabled = false;
   let renderBodyMenuID = null;
   let actorFilterEnabled = true;
   let actorFilterMenuID = null;
   let md = null;
 
+  /** Event list, paging info, and DOM references */
+  let eventsList = [];
+  let currentPage = 1;
+  let hasMore = true;
+  let loading = false;
+  let containerRef = null;
+  let moreBtnRef = null;
+
+  // ================== UTILITY FUNCTIONS ==================
+
   /**
-   * Initialize markdown engine if needed.
+   * Initializes the Markdown engine if necessary.
    */
   function initMarkdown() {
-    if (renderBodyEnabled && !md) {
+    if (renderBodyEnabled && !md && window.markdownit) {
       md = window.markdownit({
-        html: false, // Strictly disallow raw HTML for safety
+        html: false, // Never allow raw HTML for security
         linkify: true,
         typographer: true,
         breaks: true,
@@ -91,13 +87,13 @@
   }
 
   /**
-   * Rewrite console to include tag and send notifications.
-   * All logs are forced visible and safe.
+   * Rewrites the console to include a tag and send notifications.
+   * All logs are forcibly visible and safe.
    */
   function rewriteConsole() {
     const TAG = "[GH Dashboard Feed]";
 
-    // Capture originals
+    // Preserve original console functions
     const original = {
       log: console.log.bind(console),
       warn: console.warn.bind(console),
@@ -105,14 +101,18 @@
     };
 
     /**
-     * Convert string to visible ASCII for notification.
+     * Converts a string to visible ASCII for notification.
+     * @param {string} str - Raw string
+     * @returns {string} - ASCII-only string
      */
     function toVisibleAscii(str) {
-      return str.replace(/[^\x20-\x7E]/g, "?");
+      return String(str).replace(/[^\x20-\x7E]/g, "?");
     }
 
     /**
-     * Convert arguments to a safe, printable string.
+     * Formats arguments into a printable string.
+     * @param {Array} args - Console arguments
+     * @returns {string}
      */
     function formatArgs(args) {
       return args
@@ -134,12 +134,15 @@
     }
 
     /**
-     * Wrap a console function to add tag, and trigger notification.
+     * Wraps a console function, adds a tag, and triggers notification.
+     * @param {Function} fn - Original console function
+     * @param {string} tag - Custom tag
+     * @returns {Function}
      */
     function wrapConsole(fn, tag) {
       return function (...args) {
-        fn(tag, ...args);
         try {
+          fn(tag, ...args);
           const text = formatArgs([tag, ...args]);
           const asciiText = toVisibleAscii(text);
           GM.notification(
@@ -147,7 +150,9 @@
               ? asciiText.slice(0, NOTIFICATION_MAX_LENGTH) + "..."
               : asciiText
           );
-        } catch {} // Ignore notification failures
+        } catch {
+          // Ignore notification failures
+        }
       };
     }
 
@@ -157,18 +162,27 @@
   }
 
   /**
-   * Update or re-register the "Render Body" menu command.
-   * Allows user to toggle whether markdown body is rendered in event cards.
+   * Updates or re-registers the "Render Body" menu command.
    */
   async function updateRenderBodyMenuCommand() {
-    if (renderBodyMenuID !== null) GM.unregisterMenuCommand(renderBodyMenuID);
+    if (renderBodyMenuID !== null) {
+      try {
+        GM.unregisterMenuCommand(renderBodyMenuID);
+      } catch (e) {
+        // Ignore unregister failures
+      }
+    }
 
     renderBodyMenuID = GM.registerMenuCommand(
       `Turn ${renderBodyEnabled ? "Off" : "On"} Render Body Feature`,
       async () => {
         renderBodyEnabled = !renderBodyEnabled;
         initMarkdown();
-        await GM.setValue(RENDER_BODY_KEY, renderBodyEnabled);
+        try {
+          await GM.setValue(RENDER_BODY_KEY, renderBodyEnabled);
+        } catch (e) {
+          console.error("Failed to persist Render Body setting:", e);
+        }
         console.log(
           `Render Body Feature is now ${renderBodyEnabled ? "On" : "Off"}`
         );
@@ -179,17 +193,26 @@
   }
 
   /**
-   * Update or re-register the "Actor Filter" menu command.
-   * Allows user to toggle whether actor-based event filtering is enabled.
+   * Updates or re-registers the "Actor Filter" menu command.
    */
   async function updateActorFilterMenuCommand() {
-    if (actorFilterMenuID !== null) GM.unregisterMenuCommand(actorFilterMenuID);
+    if (actorFilterMenuID !== null) {
+      try {
+        GM.unregisterMenuCommand(actorFilterMenuID);
+      } catch (e) {
+        // Ignore unregister failures
+      }
+    }
 
     actorFilterMenuID = GM.registerMenuCommand(
       `Turn ${actorFilterEnabled ? "Off" : "On"} Actor Filter`,
       async () => {
         actorFilterEnabled = !actorFilterEnabled;
-        await GM.setValue(ACTOR_FILTER_KEY, actorFilterEnabled);
+        try {
+          await GM.setValue(ACTOR_FILTER_KEY, actorFilterEnabled);
+        } catch (e) {
+          console.error("Failed to persist Actor Filter setting:", e);
+        }
         console.log(`Actor Filter is now ${actorFilterEnabled ? "On" : "Off"}`);
         await updateActorFilterMenuCommand();
       },
@@ -198,12 +221,15 @@
   }
 
   /**
-   * Get GitHub personal access token from storage.
+   * Retrieves the GitHub personal access token from storage.
+   * @returns {Promise<string|null>}
    */
   async function getToken() {
     try {
       const token = await GM.getValue(TOKEN_KEY, "");
-      return typeof token === "string" && token.length > 0 ? token : null;
+      return typeof token === "string" && token.trim().length > 0
+        ? token.trim()
+        : null;
     } catch (e) {
       console.error("Error fetching token:", e);
       return null;
@@ -211,11 +237,12 @@
   }
 
   /**
-   * Prompt user and store GitHub token.
+   * Prompts user to configure and store the GitHub token.
    */
   async function configureToken() {
     try {
-      const val = prompt("GitHub Token", (await getToken()) || "");
+      const currentVal = (await getToken()) || "";
+      const val = window.prompt("GitHub Token", currentVal);
       if (val !== null) {
         await GM.setValue(TOKEN_KEY, val.trim());
       }
@@ -225,11 +252,11 @@
   }
 
   /**
-   * Try to get currently logged-in username from DOM.
+   * Attempts to extract the currently logged-in username from DOM.
+   * @returns {string|null}
    */
   function getUsername() {
     try {
-      // Try meta tags and data-login attributes
       const metaUserLogin = document.querySelector('meta[name="user-login"]');
       if (metaUserLogin?.content) return metaUserLogin.content;
       const metaActorLogin = document.querySelector(
@@ -246,7 +273,9 @@
   }
 
   /**
-   * Wait for username to be available in DOM.
+   * Waits for username to be available in DOM.
+   * @param {number} timeout - Timeout in ms
+   * @returns {Promise<string>}
    */
   function waitForUsername(timeout = 4000) {
     return new Promise((resolve, reject) => {
@@ -262,7 +291,9 @@
   }
 
   /**
-   * Wait for the right sidebar to appear.
+   * Waits for the right sidebar to appear.
+   * @param {number} timeout - Timeout in ms
+   * @returns {Promise<Element>}
    */
   function waitForSidebar(timeout = 6000) {
     return new Promise((resolve, reject) => {
@@ -284,11 +315,12 @@
   }
 
   /**
-   * Fetch received events from GitHub API.
+   * Fetches received events from the GitHub API.
    * @param {string} username - GitHub username
    * @param {string} token    - GitHub Personal Access Token
    * @param {number} perPage  - Items per page
    * @param {number} page     - Page number
+   * @returns {Promise<{events: Array, hasNext: boolean}>}
    */
   async function fetchReceivedEvents(username, token, perPage = 30, page = 1) {
     const url = `https://api.github.com/users/${encodeURIComponent(
@@ -308,15 +340,15 @@
         throw new Error(`GitHub API error: ${res.status} ${res.statusText}`);
       }
       const link = res.headers.get("Link");
-      let hasNext = false,
-        lastPage = page;
+      let hasNext = false;
       if (link) {
         hasNext = /rel="next"/.test(link);
-        const m = link.match(/&page=(\d+)>; rel="last"/);
-        if (m) lastPage = parseInt(m[1], 10);
-        else lastPage = hasNext ? page + 1 : page;
       }
-      return { events: await res.json(), lastPage };
+      const events = await res.json();
+      if (!Array.isArray(events)) {
+        throw new Error("Unexpected GitHub API response: not an array");
+      }
+      return { events, hasNext };
     } catch (error) {
       console.error("Fetch error:", error);
       throw error;
@@ -324,17 +356,23 @@
   }
 
   /**
-   * Remove old section node by ID.
+   * Removes the old section node by ID.
+   * @param {string} sectionId
    */
   function removeOldSection(sectionId = FEED_SECTION_ID) {
     try {
       const old = document.getElementById(sectionId);
       if (old && old.parentElement) old.parentElement.removeChild(old);
-    } catch {}
+    } catch (e) {
+      // Ignore removal failures
+    }
   }
 
   /**
-   * Insert events section into sidebar, replacing older one.
+   * Inserts the events section into the sidebar, replacing any older section.
+   * @param {Element} cardsWrapper
+   * @param {Element} sidebar
+   * @param {string} sectionId
    */
   function insertEventsSectionSibling(
     cardsWrapper,
@@ -343,117 +381,27 @@
   ) {
     removeOldSection(sectionId);
     cardsWrapper.id = sectionId;
-    if (sidebar.firstChild) {
-      sidebar.insertBefore(cardsWrapper, sidebar.firstChild);
-    } else {
-      sidebar.appendChild(cardsWrapper);
-    }
-  }
-
-  /**
-   * Generate array for pagination display.
-   */
-  function getPaginationDisplay(page, lastPage) {
-    if (lastPage <= PAGINATION_MAX_DISPLAY) {
-      return Array.from({ length: lastPage }, (_, i) => i + 1);
-    }
-    if (page <= 3) {
-      return [1, 2, 3, 4, "...", lastPage - 1, lastPage];
-    }
-    if (page === 4) {
-      return [1, 2, 3, 4, 5, "...", lastPage];
-    }
-    if (page >= lastPage - 2) {
-      return [1, 2, "...", lastPage - 3, lastPage - 2, lastPage - 1, lastPage];
-    }
-    if (page === lastPage - 3) {
-      return [
-        1,
-        2,
-        "...",
-        lastPage - 4,
-        lastPage - 3,
-        lastPage - 2,
-        lastPage - 1,
-        lastPage,
-      ];
-    }
-    return [1, "...", page - 1, page, page + 1, "...", lastPage];
-  }
-
-  /**
-   * Render pagination controls with numbers and ellipsis.
-   */
-  function renderPaginationControls({
-    page,
-    lastPage,
-    onPageChange,
-    containerId,
-  }) {
-    const nav = document.createElement("nav");
-    nav.setAttribute("aria-label", "Pagination");
-    nav.style.display = "flex";
-    nav.style.justifyContent = "center";
-    nav.style.margin = "16px 0 0 0";
-
-    const ul = document.createElement("ul");
-    ul.className = "pagination";
-    ul.style.display = "inline-flex";
-    ul.style.listStyle = "none";
-    ul.style.padding = "0";
-    ul.style.margin = "0";
-
-    function addBtn(txt, pageNum, isActive, isDisabled) {
-      const li = document.createElement("li");
-      if (txt === "...") {
-        li.innerHTML = `<span style="display:inline-block;min-width:24px;text-align:center;color:#888;">...</span>`;
+    try {
+      if (sidebar.firstChild) {
+        sidebar.insertBefore(cardsWrapper, sidebar.firstChild);
       } else {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.textContent = txt;
-        btn.className = "btn btn-outline BtnGroup-item";
-        btn.disabled = !!isDisabled;
-        btn.style.margin = "0 2px";
-        btn.style.fontSize = "13px";
-        btn.style.minWidth = "32px";
-        btn.style.padding = "5px 10px";
-        btn.style.cursor = isDisabled ? "not-allowed" : "pointer";
-        if (isActive) {
-          btn.className += " selected";
-          btn.style.fontWeight = "bold";
-          btn.style.background = "#ddf4ff";
-        }
-        btn.onclick = () => {
-          if (!isDisabled && pageNum !== page) {
-            onPageChange(pageNum);
-            setTimeout(() => {
-              const el = document.getElementById(containerId);
-              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-            }, 20);
-          }
-        };
-        li.appendChild(btn);
+        sidebar.appendChild(cardsWrapper);
       }
-      ul.appendChild(li);
+    } catch (e) {
+      console.error("Failed to insert events section:", e);
     }
-    const displayPages = getPaginationDisplay(page, lastPage);
-    displayPages.forEach((p) => {
-      if (p === "...") {
-        addBtn("...", 0, false, true);
-      } else {
-        addBtn(`${p}`, p, p === page, false);
-      }
-    });
-    nav.appendChild(ul);
-    return nav;
   }
 
   /**
-   * Format a date string as a "time ago" label.
+   * Formats a date string as a "time ago" label.
+   * @param {string} dateString
+   * @returns {string}
    */
   function timeAgo(dateString) {
+    if (!dateString) return "";
     const now = new Date();
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return "";
     const seconds = Math.floor((now - date) / 1000);
 
     if (seconds < 10) return "now";
@@ -473,13 +421,12 @@
   }
 
   /**
-   * Render reactions bar if reactions exist on target object.
-   * @param {object} reactions - reactions object from GitHub API
-   * @returns {HTMLElement|null} A DOM node to display reactions, or null if none
+   * Renders a reactions bar if reactions exist on the target object.
+   * @param {object} reactions - Reactions object from GitHub API
+   * @returns {HTMLElement|null}
    */
   function renderReactionsBar(reactions) {
-    // Only show if at least one reaction count > 0
-    if (!reactions) return null;
+    if (!reactions || typeof reactions !== "object") return null;
     const reactionMeta = [
       { key: "+1", emoji: "👍", label: "Thumbs up" },
       { key: "-1", emoji: "👎", label: "Thumbs down" },
@@ -492,14 +439,14 @@
     ];
     let hasAny = false;
     for (const meta of reactionMeta) {
-      if (reactions[meta.key] > 0) {
+      if (typeof reactions[meta.key] === "number" && reactions[meta.key] > 0) {
         hasAny = true;
         break;
       }
     }
     if (!hasAny) return null;
 
-    // Style: similar to GitHub's reactions bar in issues/comments
+    // Styling similar to GitHub's reactions bar
     const bar = document.createElement("div");
     bar.className = "gh-dashboard-reactions-bar";
     bar.style.display = "flex";
@@ -509,8 +456,7 @@
     bar.style.alignItems = "center";
     for (const meta of reactionMeta) {
       const count = reactions[meta.key];
-      if (count > 0) {
-        // Use button for cursor and accessibility, but disabled
+      if (typeof count === "number" && count > 0) {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.disabled = true;
@@ -533,9 +479,9 @@
   }
 
   /**
-   * Return true if the given actor matches any filter rule.
-   * If any property in a filter rule matches the corresponding property in actor (===), returns true.
+   * Determines whether the given actor matches any filter rule.
    * @param {object} actor - The event's actor object
+   * @returns {boolean}
    */
   function isActorFiltered(actor) {
     if (!actor) return false;
@@ -550,11 +496,12 @@
   }
 
   /**
-   * Render an event card element.
+   * Renders an event card element.
    * @param {object} event - GitHub event object
+   * @returns {Promise<HTMLElement>}
    */
   async function renderEventCard(event) {
-    const { type, repo, actor, created_at, payload } = event;
+    const { type, repo, actor, created_at, payload } = event || {};
     const card = document.createElement("div");
     card.className =
       "dashboard-events color-bg-default border color-border-default p-3 rounded-2";
@@ -569,28 +516,30 @@
     card.style.height = "auto";
     card.style.overflow = "hidden";
 
-    // Actor and repo visualization
-    const actorLink = actor
-      ? `<a style="font-weight:bold" href="https://github.com/${encodeURIComponent(
-          actor.login
-        )}" target="_blank" rel="noopener noreferrer">${actor.login}</a>`
-      : "";
-    const actorAvatar = actor
-      ? `<img src="${actor.avatar_url}" alt="avatar" style="width:28px;height:28px;border-radius:50%;margin-right:7px;vertical-align:middle;">`
-      : "";
-    const repoLink = repo
-      ? `<a style="font-weight:bold" href="https://github.com/${repo.name}" target="_blank" rel="noopener noreferrer">${repo.name}</a>`
-      : "";
+    // Actor and repo rendering
+    const actorLink =
+      actor && actor.login
+        ? `<a style="font-weight:bold" href="https://github.com/${encodeURIComponent(
+            actor.login
+          )}" target="_blank" rel="noopener noreferrer">${actor.login}</a>`
+        : "";
+    const actorAvatar =
+      actor && actor.avatar_url
+        ? `<img src="${actor.avatar_url}" alt="avatar" style="width:28px;height:28px;border-radius:50%;margin-right:7px;vertical-align:middle;">`
+        : "";
+    const repoLink =
+      repo && repo.name
+        ? `<a style="font-weight:bold" href="https://github.com/${repo.name}" target="_blank" rel="noopener noreferrer">${repo.name}</a>`
+        : "";
 
     /**
-     * Render body or short_description_html.
-     * Always sanitize HTML with DOMPurify.
+     * Renders body or short_description_html, always sanitized.
+     * @param {string} body - Markdown content
+     * @param {string|null} html - HTML content
+     * @returns {string}
      */
     function renderBodyOrShortHtml(body, html) {
-      if (!renderBodyEnabled) {
-        return "";
-      }
-
+      if (!renderBodyEnabled) return "";
       let htmlContent = `<div style="max-width:340px;margin-left:35px;overflow-wrap:break-word;">${
         html
           ? `<div class="event-body-html">${DOMPurify.sanitize(html)}</div>`
@@ -604,241 +553,230 @@
     }
 
     /**
-     * Compose the main content for the event card based on event type.
+     * Main content rendering based on event type.
      */
     let content = "";
     try {
       switch (type) {
-        case "WatchEvent": {
+        case "WatchEvent":
           content = `${actorAvatar}${actorLink} ${
-            payload.action === "started" ? "starred" : payload.action
+            payload?.action === "started" ? "starred" : payload?.action || "did"
           } ${repoLink}`;
           break;
-        }
 
-        case "ForkEvent": {
+        case "ForkEvent":
           content = `${actorAvatar}${actorLink} forked <a href="${
-            payload.forkee.html_url
+            payload?.forkee?.html_url || "#"
           }" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
-            payload.forkee.full_name
+            payload?.forkee?.full_name || ""
           )}</a> from ${repoLink}`;
           break;
-        }
 
-        case "PushEvent": {
-          const commits = payload.commits || [];
+        case "PushEvent":
+          {
+            const commits = payload?.commits || [];
+            content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${
+              repo?.name || ""
+            }/compare/${payload?.before || ""}...${
+              payload?.head || ""
+            }" target="_blank" rel="noopener noreferrer">${
+              payload?.size || 0
+            } ${payload?.size > 1 ? "commits" : "commit"}</a> to ${repoLink}`;
 
-          content = `${actorAvatar}${actorLink} pushed <a href="https://github.com/${
-            repo.name
-          }/compare/${payload.before}...${
-            payload.head
-          }" target="_blank" rel="noopener noreferrer">${payload.size} ${
-            payload.size > 1 ? "commits" : "commit"
-          }</a> to ${repoLink}`;
-
-          if (commits.length > 0) {
-            let list = [];
-            for (const commit of commits.slice(0, 9)) {
-              const messages = commit.message.split("\n");
-              const message =
-                messages.length === 0
-                  ? ""
-                  : messages.length === 1
-                  ? messages[0]
-                  : messages[0] + " ...";
-              list.push(
-                `- **[${commit.sha.substring(0, 7)}](https://github.com/${
-                  repo.name
-                }/commit/${commit.sha})**: ${message}`
-              );
+            if (commits.length > 0) {
+              let list = [];
+              for (const commit of commits.slice(0, 9)) {
+                const messages = (commit.message || "").split("\n");
+                const message =
+                  messages.length === 0
+                    ? ""
+                    : messages.length === 1
+                    ? messages[0]
+                    : messages[0] + " ...";
+                list.push(
+                  `- **[${
+                    commit.sha?.substring(0, 7) || "?"
+                  }](https://github.com/${repo?.name || ""}/commit/${
+                    commit.sha
+                  })**: ${message}`
+                );
+              }
+              content += renderBodyOrShortHtml(list.join("\n"), null);
             }
-            content += renderBodyOrShortHtml(list.join("\n"), null);
           }
           break;
-        }
 
-        case "CreateEvent": {
-          if (payload.ref_type === "repository") {
+        case "CreateEvent":
+          if (payload?.ref_type === "repository") {
             content = `${actorAvatar}${actorLink} created repository ${repoLink}`;
           } else {
             content = `${actorAvatar}${actorLink} created ${
-              payload.ref_type
+              payload?.ref_type || ""
             } <strong>${DOMPurify.sanitize(
-              payload.ref || ""
+              payload?.ref || ""
             )}</strong> in ${repoLink}`;
           }
           break;
-        }
 
-        case "DeleteEvent": {
+        case "DeleteEvent":
           content = `${actorAvatar}${actorLink} deleted ${
-            payload.ref_type
-          } <strong>${DOMPurify.sanitize(payload.ref)}</strong> in ${repoLink}`;
+            payload?.ref_type || ""
+          } <strong>${DOMPurify.sanitize(
+            payload?.ref || ""
+          )}</strong> in ${repoLink}`;
           break;
-        }
 
-        case "PublicEvent": {
+        case "PublicEvent":
           content = `${actorAvatar}${actorLink} open sourced ${repoLink}`;
           break;
-        }
 
-        case "IssueCommentEvent": {
+        case "IssueCommentEvent":
           content = `${actorAvatar}${actorLink} commented on 
-                      <a href="${payload.comment.html_url}" target="_blank" rel="noopener noreferrer">issue #${payload.issue.number}</a> in ${repoLink}`;
-
-          content += renderBodyOrShortHtml(payload.comment.body, null);
-
-          const bar = renderReactionsBar(payload.comment.reactions);
-          if (bar) {
-            content += bar.outerHTML;
+                      <a href="${
+                        payload?.comment?.html_url || "#"
+                      }" target="_blank" rel="noopener noreferrer">issue #${
+            payload?.issue?.number || "?"
+          }</a> in ${repoLink}`;
+          content += renderBodyOrShortHtml(payload?.comment?.body, null);
+          if (payload?.comment?.reactions) {
+            const bar = renderReactionsBar(payload.comment.reactions);
+            if (bar) content += bar.outerHTML;
           }
-
           break;
-        }
 
-        case "IssuesEvent": {
-          content = `${actorAvatar}${actorLink} ${payload.action}
-                    <a href="${payload.issue.html_url}" target="_blank" rel="noopener noreferrer">issue #${payload.issue.number}</a> in ${repoLink}`;
-
+        case "IssuesEvent":
+          content = `${actorAvatar}${actorLink} ${payload?.action || "did"}
+                    <a href="${
+                      payload?.issue?.html_url || "#"
+                    }" target="_blank" rel="noopener noreferrer">issue #${
+            payload?.issue?.number || "?"
+          }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(
-            `##### ${payload.issue.title}`,
+            `##### ${payload?.issue?.title || ""}`,
             null
           );
-
-          const bar = renderReactionsBar(payload.issue.reactions);
-          if (bar) {
-            content += bar.outerHTML;
+          if (payload?.issue?.reactions) {
+            const bar = renderReactionsBar(payload.issue.reactions);
+            if (bar) content += bar.outerHTML;
           }
-
           break;
-        }
 
-        case "PullRequestEvent": {
-          content = `${actorAvatar}${actorLink} ${payload.action} 
-                    <a href="${payload.pull_request.html_url}" target="_blank" rel="noopener noreferrer">pull request #${payload.pull_request.number}</a> in ${repoLink}`;
-
+        case "PullRequestEvent":
+          content = `${actorAvatar}${actorLink} ${payload?.action || "did"} 
+                    <a href="${
+                      payload?.pull_request?.html_url || "#"
+                    }" target="_blank" rel="noopener noreferrer">pull request #${
+            payload?.pull_request?.number || "?"
+          }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(
-            `##### ${payload.pull_request.title}` +
-              "\n" +
-              payload.pull_request.body,
+            `##### ${payload?.pull_request?.title || ""}\n${
+              payload?.pull_request?.body || ""
+            }`,
             null
           );
-
-          const bar = renderReactionsBar(payload.pull_request.reactions);
-          if (bar) {
-            content += bar.outerHTML;
+          if (payload?.pull_request?.reactions) {
+            const bar = renderReactionsBar(payload.pull_request.reactions);
+            if (bar) content += bar.outerHTML;
           }
-
           break;
-        }
 
-        case "PullRequestReviewEvent": {
+        case "PullRequestReviewEvent":
           content = `${actorAvatar}${actorLink} reviewed 
-                    <a href="${payload.review.html_url}" target="_blank" rel="noopener noreferrer">pull request #${payload.pull_request.number}</a> in ${repoLink}`;
-
+                    <a href="${
+                      payload?.review?.html_url || "#"
+                    }" target="_blank" rel="noopener noreferrer">pull request #${
+            payload?.pull_request?.number || "?"
+          }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(
-            `##### ${payload.pull_request.title}` + "\n" + payload.review.body,
+            `##### ${payload?.pull_request?.title || ""}\n${
+              payload?.review?.body || ""
+            }`,
             null
           );
-
-          const bar = renderReactionsBar(payload.review.reactions);
-          if (bar) {
-            content += bar.outerHTML;
+          if (payload?.review?.reactions) {
+            const bar = renderReactionsBar(payload.review.reactions);
+            if (bar) content += bar.outerHTML;
           }
-
           break;
-        }
 
-        case "PullRequestReviewCommentEvent": {
-          content = `${actorAvatar}${actorLink} commented on 
-                    <a href="${payload.comment.html_url}" target="_blank" rel="noopener noreferrer">pull request #${payload.pull_request.number}</a> in ${repoLink}`;
-
-          content += renderBodyOrShortHtml(
-            `##### ${payload.pull_request.title}` + "\n" + payload.comment.body,
-            null
-          );
-
-          const bar = renderReactionsBar(payload.comment.reactions);
-          if (bar) {
-            content += bar.outerHTML;
-          }
-
-          break;
-        }
-
-        case "CommitCommentEvent": {
+        case "PullRequestReviewCommentEvent":
           content = `${actorAvatar}${actorLink} commented on 
                     <a href="${
-                      payload.comment.html_url
-                    }" target="_blank" rel="noopener noreferrer">commit ${payload.comment.commit_id.substring(
-            0,
-            7
-          )}</a> in ${repoLink}`;
-
-          content += renderBodyOrShortHtml(payload.comment.body, null);
-
-          const bar = renderReactionsBar(payload.comment.reactions);
-          if (bar) {
-            content += bar.outerHTML;
+                      payload?.comment?.html_url || "#"
+                    }" target="_blank" rel="noopener noreferrer">pull request #${
+            payload?.pull_request?.number || "?"
+          }</a> in ${repoLink}`;
+          content += renderBodyOrShortHtml(
+            `##### ${payload?.pull_request?.title || ""}\n${
+              payload?.comment?.body || ""
+            }`,
+            null
+          );
+          if (payload?.comment?.reactions) {
+            const bar = renderReactionsBar(payload.comment.reactions);
+            if (bar) content += bar.outerHTML;
           }
-
           break;
-        }
 
-        case "MemberEvent": {
+        case "CommitCommentEvent":
+          content = `${actorAvatar}${actorLink} commented on 
+                    <a href="${
+                      payload?.comment?.html_url || "#"
+                    }" target="_blank" rel="noopener noreferrer">commit ${
+            payload?.comment?.commit_id?.substring(0, 7) || "???"
+          }</a> in ${repoLink}`;
+          content += renderBodyOrShortHtml(payload?.comment?.body, null);
+          if (payload?.comment?.reactions) {
+            const bar = renderReactionsBar(payload.comment.reactions);
+            if (bar) content += bar.outerHTML;
+          }
+          break;
+
+        case "MemberEvent":
           content = `${actorAvatar}${actorLink} added <a href="https://github.com/${encodeURIComponent(
-            payload.member.login
+            payload?.member?.login || ""
           )}" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
-            payload.member.login
+            payload?.member?.login || ""
           )}</a> to ${repoLink}`;
-
           break;
-        }
 
-        case "GollumEvent": {
+        case "GollumEvent":
           content = `${actorAvatar}${actorLink} edited wiki in ${repoLink}`;
-
-          const pages = payload.pages || [];
-
-          if (pages.length > 0) {
-            let list = [];
-            for (const page of pages.slice(0, 9)) {
-              list.push(
-                `- ${page.action} [${page.page_name}](${page.html_url})`
-              );
+          {
+            const pages = payload?.pages || [];
+            if (pages.length > 0) {
+              let list = [];
+              for (const page of pages.slice(0, 9)) {
+                list.push(
+                  `- ${page.action} [${page.page_name}](${page.html_url})`
+                );
+              }
+              content += renderBodyOrShortHtml(list.join("\n"), null);
             }
-            content += renderBodyOrShortHtml(list.join("\n"), null);
           }
-
           break;
-        }
 
-        case "ReleaseEvent": {
-          content = `${actorAvatar}${actorLink} ${payload.action} 
+        case "ReleaseEvent":
+          content = `${actorAvatar}${actorLink} ${payload?.action || "did"} 
                   <a href="${
-                    payload.release.html_url
+                    payload?.release?.html_url || "#"
                   }" target="_blank" rel="noopener noreferrer">release ${DOMPurify.sanitize(
-            payload.release.name || payload.release.tag_name
+            payload?.release?.name || payload?.release?.tag_name || ""
           )}</a> in ${repoLink}`;
-
-          content += renderBodyOrShortHtml(payload.release.body, null);
-
-          const bar = renderReactionsBar(payload.release.reactions);
-          if (bar) {
-            content += bar.outerHTML;
+          content += renderBodyOrShortHtml(payload?.release?.body, null);
+          if (payload?.release?.reactions) {
+            const bar = renderReactionsBar(payload.release.reactions);
+            if (bar) content += bar.outerHTML;
           }
-
           break;
-        }
 
-        case "SponsorshipEvent": {
+        case "SponsorshipEvent":
           content = `${actorAvatar}${actorLink} sponsored or received a sponsorship.`;
           break;
-        }
 
         default:
           content = `${actorAvatar}${actorLink} did <code>${DOMPurify.sanitize(
-            type
+            type || ""
           )}</code> in ${repoLink}`;
       }
     } catch (e) {
@@ -849,26 +787,217 @@
         (repoLink || "") +
         " " +
         DOMPurify.sanitize(type || "");
+      console.error("Error rendering card for event:", e, event);
     }
 
-    // Format date
+    // Date formatting
     const date = timeAgo(created_at);
 
-    // Render card
-    card.innerHTML = DOMPurify.sanitize(
-      `<div>${content}</div>
-      <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`
-    );
+    // Card rendering
+    try {
+      card.innerHTML = DOMPurify.sanitize(
+        `<div>${content}</div>
+        <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`
+      );
+    } catch (e) {
+      card.innerHTML = "<div style='color:red'>[Error rendering card]</div>";
+      console.error("Card innerHTML error:", e);
+    }
     return card;
   }
 
-  // ---- Entrypoint begins ----
+  /**
+   * Renders the events feed section, appending new events.
+   * @param {boolean} append - Whether to append to existing events
+   * @param {string} username
+   * @param {string} token
+   * @param {Element} sidebar
+   */
+  async function renderFeed(append = false, username, token, sidebar) {
+    let cardsSection;
+    if (containerRef && append) {
+      cardsSection = containerRef;
+    } else {
+      cardsSection = document.createElement("div");
+      cardsSection.style.display = "flex";
+      cardsSection.style.flexDirection = "column";
+      cardsSection.style.margin = "0 0 19px 0";
+      cardsSection.style.gap = "0 2px";
+      cardsSection.style.minHeight = "420px";
+      cardsSection.id = FEED_SECTION_ID;
+      containerRef = cardsSection;
+    }
 
+    // Header
+    let header = cardsSection.querySelector(".gh-dashboard-feed-header");
+    if (!header) {
+      header = document.createElement("div");
+      header.className = "gh-dashboard-feed-header";
+      header.style.display = "flex";
+      header.style.justifyContent = "flex-start";
+      header.style.alignItems = "baseline";
+      header.innerHTML = `<h3 style="font-size:18px;font-weight:600;margin:0 5px 16px 0">Your Received Events</h3>`;
+      cardsSection.append(header);
+    }
+
+    // Cards row
+    let cardsRow = cardsSection.querySelector(".gh-dashboard-feed-row");
+    if (!cardsRow) {
+      cardsRow = document.createElement("div");
+      cardsRow.className = "gh-dashboard-feed-row";
+      cardsRow.style.display = "flex";
+      cardsRow.style.flexWrap = "wrap";
+      cardsRow.style.gap = "0 2px";
+      cardsRow.style.width = "100%";
+      cardsRow.style.boxSizing = "border-box";
+      cardsRow.style.minHeight = "330px";
+      cardsSection.append(cardsRow);
+    }
+
+    // If not appending, clear all event cards
+    if (!append) {
+      cardsRow.innerHTML = "";
+    }
+
+    // Insert section into sidebar
+    if (!append) {
+      insertEventsSectionSibling(cardsSection, sidebar, FEED_SECTION_ID);
+    } else if (!sidebar.contains(cardsSection)) {
+      try {
+        sidebar.insertBefore(cardsSection, sidebar.firstChild);
+      } catch (e) {
+        console.error("Sidebar append error:", e);
+      }
+    }
+
+    // Render event cards
+    if (eventsList.length === 0 && !loading) {
+      cardsRow.innerHTML =
+        '<div style="color:#888;padding:12px">No events</div>';
+    } else {
+      // Only render new cards if appending
+      const fragment = document.createDocumentFragment();
+      for (let i = cardsRow.childNodes.length; i < eventsList.length; ++i) {
+        try {
+          fragment.appendChild(await renderEventCard(eventsList[i]));
+        } catch (e) {
+          console.error("Error appending event card:", e, eventsList[i]);
+        }
+      }
+      cardsRow.appendChild(fragment);
+    }
+
+    // --- More Button Handling ---
+    if (eventsList.length === 0 || !hasMore) {
+      if (moreBtnRef && moreBtnRef.parentElement) {
+        moreBtnRef.parentElement.removeChild(moreBtnRef);
+      }
+      moreBtnRef = null;
+    } else {
+      if (!moreBtnRef) {
+        moreBtnRef = document.createElement("div");
+        moreBtnRef.style.display = "flex";
+        moreBtnRef.style.justifyContent = "center";
+        moreBtnRef.style.margin = "4px 0 0 0";
+        moreBtnRef.style.width = "100%";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn-outline btn-block gh-dashboard-feed-more-btn";
+        btn.style.fontWeight = "500";
+        btn.style.marginTop = "0";
+        btn.onclick = async () => {
+          if (loading) return;
+          loading = true;
+          renderFeed(true, username, token, sidebar);
+          let prevHeight = cardsSection.scrollHeight;
+          let prevScroll = window.scrollY;
+          try {
+            const nextPage = currentPage + 1;
+            const data = await fetchReceivedEvents(
+              username,
+              token,
+              PER_PAGE,
+              nextPage
+            );
+            let newEvents = Array.isArray(data.events) ? data.events : [];
+            if (actorFilterEnabled) {
+              newEvents = newEvents.filter((ev) => !isActorFiltered(ev.actor));
+            }
+            eventsList = eventsList.concat(newEvents);
+            currentPage = nextPage;
+            hasMore = !!data.hasNext && newEvents.length > 0;
+          } catch (e) {
+            hasMore = false;
+            console.error("Load more error:", e);
+          }
+          loading = false;
+          renderFeed(true, username, token, sidebar);
+
+          // Maintain scroll position if user is not at the bottom
+          if (window.scrollY < prevHeight - 200) {
+            window.scrollTo({ top: prevScroll, behavior: "auto" });
+          }
+        };
+        moreBtnRef.appendChild(btn);
+        cardsSection.appendChild(moreBtnRef);
+      }
+      const btn = moreBtnRef.querySelector("button");
+      if (loading) {
+        btn.disabled = true;
+        btn.textContent = "Loading More...";
+      } else {
+        btn.disabled = false;
+        btn.textContent = "More";
+      }
+      // Ensure button is at the end
+      if (cardsSection.lastChild !== moreBtnRef) {
+        cardsSection.appendChild(moreBtnRef);
+      }
+    }
+  }
+
+  /**
+   * Fetches the first page and renders the feed.
+   * @param {string} username
+   * @param {string} token
+   * @param {Element} sidebar
+   */
+  async function initialLoad(username, token, sidebar) {
+    loading = true;
+    await renderFeed(false, username, token, sidebar); // Show Loading
+    try {
+      const data = await fetchReceivedEvents(username, token, PER_PAGE, 1);
+      let events = Array.isArray(data.events) ? data.events : [];
+      if (actorFilterEnabled) {
+        events = events.filter((ev) => !isActorFiltered(ev.actor));
+      }
+      eventsList = events;
+      currentPage = 1;
+      hasMore = !!data.hasNext && events.length > 0;
+    } catch (e) {
+      eventsList = [];
+      currentPage = 1;
+      hasMore = false;
+      console.error("initialLoad error:", e);
+    }
+    loading = false;
+    await renderFeed(false, username, token, sidebar);
+  }
+
+  // ================== MAIN ENTRYPOINT ==================
   try {
     // Step 1: Setup state and menu
     rewriteConsole();
-    renderBodyEnabled = await GM.getValue(RENDER_BODY_KEY, false);
-    actorFilterEnabled = await GM.getValue(ACTOR_FILTER_KEY, true);
+    try {
+      renderBodyEnabled = await GM.getValue(RENDER_BODY_KEY, false);
+    } catch {
+      renderBodyEnabled = false;
+    }
+    try {
+      actorFilterEnabled = await GM.getValue(ACTOR_FILTER_KEY, true);
+    } catch {
+      actorFilterEnabled = true;
+    }
     initMarkdown();
 
     GM.registerMenuCommand("Configure GitHub Token", configureToken);
@@ -883,98 +1012,26 @@
     }
 
     // Step 3: Wait for username and sidebar
-    const [username, sidebar] = await Promise.all([
-      waitForUsername(),
-      waitForSidebar(),
-    ]);
+    let username, sidebar;
+    try {
+      [username, sidebar] = await Promise.all([
+        waitForUsername(),
+        waitForSidebar(),
+      ]);
+    } catch (e) {
+      console.error("Failed to detect username or sidebar:", e);
+      return;
+    }
     if (!username) {
       console.warn("Could not find username, skipping.");
       return;
     }
-
-    // Step 4: Render feed with pagination
-    let currentPage = 1;
-    const perPage = 25;
-
-    async function render(page) {
-      let events = [],
-        lastPage = page;
-      try {
-        const data = await fetchReceivedEvents(username, token, perPage, page);
-        events = Array.isArray(data.events) ? data.events : [];
-        lastPage = data.lastPage;
-      } catch (e) {
-        events = [];
-        lastPage = page;
-      }
-
-      /**
-       * Apply actor filter if enabled.
-       * If actorFilterEnabled is true, filter out any event whose actor matches a rule.
-       * Otherwise, display all events.
-       */
-      if (actorFilterEnabled) {
-        events = events.filter((ev) => !isActorFiltered(ev.actor));
-      }
-
-      // Cards section
-      const cardsSection = document.createElement("div");
-      cardsSection.style.display = "flex";
-      cardsSection.style.flexDirection = "column";
-      cardsSection.style.margin = "0 0 19px 0";
-      cardsSection.style.gap = "0 2px";
-      cardsSection.style.minHeight = "420px";
-
-      // Header
-      const header = document.createElement("div");
-      header.style.display = "flex";
-      header.style.justifyContent = "flex-start";
-      header.style.alignItems = "baseline";
-      header.innerHTML = `<h3 style="font-size:18px;font-weight:600;margin:0 5px 16px 0">Your Received Events</h3>`;
-      cardsSection.append(header);
-
-      // Cards row
-      const cardsRow = document.createElement("div");
-      cardsRow.style.display = "flex";
-      cardsRow.style.flexWrap = "wrap";
-      cardsRow.style.gap = "0 2px";
-      cardsRow.style.width = "100%";
-      cardsRow.style.boxSizing = "border-box";
-      cardsRow.style.minHeight = "330px";
-
-      if (events.length === 0) {
-        cardsRow.innerHTML =
-          '<div style="color:#888;padding:12px">No events</div>';
-      } else {
-        const cards = await Promise.all(
-          events.map((ev) => renderEventCard(ev))
-        );
-        for (const card of cards) {
-          cardsRow.appendChild(card);
-        }
-      }
-      cardsSection.appendChild(cardsRow);
-
-      // Pagination
-      cardsSection.appendChild(
-        renderPaginationControls({
-          page,
-          lastPage,
-          onPageChange: (p) => {
-            if (p !== currentPage && p >= 1 && p <= lastPage) {
-              currentPage = p;
-              render(currentPage);
-            }
-          },
-          containerId: FEED_SECTION_ID,
-        })
-      );
-
-      // Insert section
-      insertEventsSectionSibling(cardsSection, sidebar, FEED_SECTION_ID);
+    if (!sidebar) {
+      console.warn("Could not find sidebar, skipping.");
+      return;
     }
 
-    render(currentPage);
+    await initialLoad(username, token, sidebar);
   } catch (e) {
     console.error("Unexpected failure:", e);
   }
