@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.8.4
+// @version      0.9.0
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -28,6 +28,7 @@
   const TOKEN_KEY = "github_token";
   const RENDER_BODY_KEY = "render_body_enabled";
   const ACTOR_FILTER_KEY = "actor_filter_enabled";
+  const USE_SIDEBAR_KEY = "use_sidebar_enabled";
   const NOTIFICATION_MAX_LENGTH = 200;
   const PER_PAGE = 25;
 
@@ -59,6 +60,9 @@
   let renderBodyMenuID = null;
   let actorFilterEnabled = true;
   let actorFilterMenuID = null;
+  let useSidebarEnabled = false;
+  let useSidebarMenuID = null;
+
   let md = null;
 
   /** Event list, paging info, and DOM references */
@@ -221,6 +225,34 @@
   }
 
   /**
+   * Updates or re-registers the "Use Sidebar" menu command.
+   */
+  async function updateUseSidebarMenuCommand() {
+    if (useSidebarMenuID !== null) {
+      try {
+        GM.unregisterMenuCommand(useSidebarMenuID);
+      } catch (e) {
+        // Ignore unregister failures
+      }
+    }
+
+    useSidebarMenuID = GM.registerMenuCommand(
+      `Render in ${useSidebarEnabled ? "middle" : "sidebar"}`,
+      async () => {
+        useSidebarEnabled = !useSidebarEnabled;
+        try {
+          await GM.setValue(USE_SIDEBAR_KEY, useSidebarEnabled);
+        } catch (e) {
+          console.error("Failed to persist Use Sidebar setting:", e);
+        }
+        console.log(`Rendering in ${useSidebarEnabled ? "sidebar" : "middle"}`);
+        await updateUseSidebarMenuCommand();
+      },
+      "t"
+    );
+  }
+
+  /**
    * Retrieves the GitHub personal access token from storage.
    * @returns {Promise<string|null>}
    */
@@ -315,6 +347,28 @@
   }
 
   /**
+   * Waits for the middle feed-container to appear.
+   * @param {number} timeout - Timeout in ms
+   * @returns {Promise<Element>}
+   */
+  function waitForFeedContainer(timeout = 6000) {
+    return new Promise((resolve, reject) => {
+      const start = Date.now();
+      (function poll() {
+        try {
+          const feedContainer = document.querySelector("feed-container");
+          if (feedContainer) return resolve(feedContainer);
+          if (Date.now() - start > timeout)
+            return reject(new Error("Timed out waiting for feed-container"));
+          setTimeout(poll, 300);
+        } catch (e) {
+          reject(e);
+        }
+      })();
+    });
+  }
+
+  /**
    * Fetches received events from the GitHub API.
    * @param {string} username - GitHub username
    * @param {string} token    - GitHub Personal Access Token
@@ -369,23 +423,23 @@
   }
 
   /**
-   * Inserts the events section into the sidebar, replacing any older section.
+   * Inserts the events section into the parent, replacing any older section.
    * @param {Element} cardsWrapper
-   * @param {Element} sidebar
+   * @param {Element} parent
    * @param {string} sectionId
    */
   function insertEventsSectionSibling(
     cardsWrapper,
-    sidebar,
+    parent,
     sectionId = FEED_SECTION_ID
   ) {
     removeOldSection(sectionId);
     cardsWrapper.id = sectionId;
     try {
-      if (sidebar.firstChild) {
-        sidebar.insertBefore(cardsWrapper, sidebar.firstChild);
+      if (parent.firstChild) {
+        parent.insertBefore(cardsWrapper, parent.firstChild);
       } else {
-        sidebar.appendChild(cardsWrapper);
+        parent.appendChild(cardsWrapper);
       }
     } catch (e) {
       console.error("Failed to insert events section:", e);
@@ -503,11 +557,17 @@
   async function renderEventCard(event) {
     const { type, repo, actor, created_at, payload } = event || {};
     const card = document.createElement("div");
+
     card.className =
       "dashboard-events color-bg-default border color-border-default p-3 rounded-2";
-    card.style.flex = "1 1 320px";
-    card.style.minWidth = "260px";
-    card.style.maxWidth = "420px";
+    if (!useSidebarEnabled) {
+      card.className += " feed-item-content width-full height-fit";
+    } else {
+      card.style.flex = "1 1 320px";
+      card.style.minWidth = "260px";
+      card.style.maxWidth = "420px";
+    }
+
     card.style.margin = "0 8px 8px 0";
     card.style.boxSizing = "border-box";
     card.style.display = "flex";
@@ -811,9 +871,9 @@
    * @param {boolean} append - Whether to append to existing events
    * @param {string} username
    * @param {string} token
-   * @param {Element} sidebar
+   * @param {Element} parent
    */
-  async function renderFeed(append = false, username, token, sidebar) {
+  async function renderFeed(append = false, username, token, parent) {
     let cardsSection;
     if (containerRef && append) {
       cardsSection = containerRef;
@@ -859,14 +919,14 @@
       cardsRow.innerHTML = "";
     }
 
-    // Insert section into sidebar
+    // Insert section into parent
     if (!append) {
-      insertEventsSectionSibling(cardsSection, sidebar, FEED_SECTION_ID);
-    } else if (!sidebar.contains(cardsSection)) {
+      insertEventsSectionSibling(cardsSection, parent, FEED_SECTION_ID);
+    } else if (!parent.contains(cardsSection)) {
       try {
-        sidebar.insertBefore(cardsSection, sidebar.firstChild);
+        parent.insertBefore(cardsSection, parent.firstChild);
       } catch (e) {
-        console.error("Sidebar append error:", e);
+        console.error("parent element append error:", e);
       }
     }
 
@@ -908,7 +968,7 @@
         btn.onclick = async () => {
           if (loading) return;
           loading = true;
-          renderFeed(true, username, token, sidebar);
+          renderFeed(true, username, token, parent);
           let prevHeight = cardsSection.scrollHeight;
           let prevScroll = window.scrollY;
           try {
@@ -931,7 +991,7 @@
             console.error("Load more error:", e);
           }
           loading = false;
-          renderFeed(true, username, token, sidebar);
+          renderFeed(true, username, token, parent);
 
           // Maintain scroll position if user is not at the bottom
           if (window.scrollY < prevHeight - 200) {
@@ -960,11 +1020,11 @@
    * Fetches the first page and renders the feed.
    * @param {string} username
    * @param {string} token
-   * @param {Element} sidebar
+   * @param {Element} parent
    */
-  async function initialLoad(username, token, sidebar) {
+  async function initialLoad(username, token, parent) {
     loading = true;
-    await renderFeed(false, username, token, sidebar); // Show Loading
+    await renderFeed(false, username, token, parent); // Show Loading
     try {
       const data = await fetchReceivedEvents(username, token, PER_PAGE, 1);
       let events = Array.isArray(data.events) ? data.events : [];
@@ -981,7 +1041,7 @@
       console.error("initialLoad error:", e);
     }
     loading = false;
-    await renderFeed(false, username, token, sidebar);
+    await renderFeed(false, username, token, parent);
   }
 
   // ================== MAIN ENTRYPOINT ==================
@@ -998,11 +1058,17 @@
     } catch {
       actorFilterEnabled = true;
     }
+    try {
+      useSidebarEnabled = await GM.getValue(USE_SIDEBAR_KEY, false);
+    } catch {
+      useSidebarEnabled = true;
+    }
     initMarkdown();
 
     GM.registerMenuCommand("Configure GitHub Token", configureToken);
     await updateRenderBodyMenuCommand();
     await updateActorFilterMenuCommand();
+    await updateUseSidebarMenuCommand();
 
     // Step 2: Get token
     const token = await getToken();
@@ -1012,14 +1078,15 @@
     }
 
     // Step 3: Wait for username and sidebar
-    let username, sidebar;
+    let username, sidebar, feedContainer;
     try {
-      [username, sidebar] = await Promise.all([
+      [username, sidebar, feedContainer] = await Promise.all([
         waitForUsername(),
         waitForSidebar(),
+        waitForFeedContainer(),
       ]);
     } catch (e) {
-      console.error("Failed to detect username or sidebar:", e);
+      console.error("Failed to detect username or components:", e);
       return;
     }
     if (!username) {
@@ -1030,8 +1097,20 @@
       console.warn("Could not find sidebar, skipping.");
       return;
     }
+    if (!feedContainer) {
+      console.warn("Could not find feed-container, skipping.");
+      return;
+    }
 
-    await initialLoad(username, token, sidebar);
+    let parent;
+    if (useSidebarEnabled) {
+      parent = sidebar;
+    } else {
+      feedContainer.innerHTML = "";
+      parent = feedContainer;
+    }
+
+    await initialLoad(username, token, parent);
   } catch (e) {
     console.error("Unexpected failure:", e);
   }
