@@ -9,7 +9,7 @@ I had to look for a new solution. Luckily, there’s still a [GitHub API](https:
 ## Warnings
 
 - **Tested only in Firefox >=143.0, Chrome ([with MV2](https://github.com/violentmonkey/violentmonkey/issues/2284#issuecomment-3214012315)) >= 140.0.7339.185 and ViolentMonkey >=2.31.0.** I’m not sure if it will run properly in other environments, but issues and PRs are welcome!
-- ViolentMonkey currently lacks a mechanism similar to [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity), so there’s no way to mitigate the supply chain attack risk from CDN services used in `@require`. We’ll have to wait for an upstream solution[^8].
+- ViolentMonkey currently lacks a mechanism similar to [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity), so there’s no upstream solution to mitigate the supply chain attack risk from CDN services used in `@require`[^8]. We're using the [workaround](https://github.com/hellodword/github-dashboard-feed/issues/1#issuecomment-3346489309).
 - By default, the body is not rendered. When enabled, it uses `DOMPurify` to sanitize the generated HTML, but there are still risks, please refer to [DOMPurify's Security Goals & Threat Model](https://github.com/cure53/DOMPurify/wiki/Security-Goals-&-Threat-Model).
 
 ## Usage
