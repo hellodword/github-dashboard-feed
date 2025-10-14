@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.9.2
+// @version      0.9.3
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -642,8 +642,12 @@
             }/compare/${payload?.before || ""}...${
               payload?.head || ""
             }" target="_blank" rel="noopener noreferrer">${
-              payload?.size || 0
-            } ${payload?.size > 1 ? "commits" : "commit"}</a> to ${repoLink}`;
+              (payload?.size || 0) === 0
+                ? "something"
+                : `${payload?.size} ${
+                    payload?.size === 1 ? "commit" : "commits"
+                  }`
+            }</a> to ${repoLink}`;
 
             if (commits.length > 0) {
               let list = [];
