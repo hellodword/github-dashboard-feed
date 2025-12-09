@@ -120,7 +120,7 @@ if __name__ == "__main__":
 
     # Download and extract DOMPurify library
     fetch_file_from_tgz(
-        tgz_url="https://registry.npmjs.org/dompurify/-/dompurify-3.3.0.tgz",
+        tgz_url="https://registry.npmjs.org/dompurify/-/dompurify-3.3.1.tgz",
         file_in_tgz="package/dist/purify.min.js",
         output_path="dist/purify.min.js"
     )
