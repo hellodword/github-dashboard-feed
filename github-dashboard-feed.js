@@ -31,6 +31,7 @@
   const RENDER_BODY_KEY = "render_body_enabled";
   const ACTOR_FILTER_KEY = "actor_filter_enabled";
   const USE_SIDEBAR_KEY = "use_sidebar_enabled";
+  const HIDE_WATCH_EVENT_KEY = "hide_watch_event_enabled";
   const NOTIFICATION_MAX_LENGTH = 200;
   const PER_PAGE = 25;
 
@@ -64,6 +65,8 @@
   let actorFilterMenuID = null;
   let useSidebarEnabled = false;
   let useSidebarMenuID = null;
+  let hideWatchEventEnabled = false;
+  let hideWatchEventMenuID = null;
 
   let md = null;
 
@@ -251,6 +254,36 @@
         await updateUseSidebarMenuCommand();
       },
       "t"
+    );
+  }
+
+  /**
+   * Updates or re-registers the "Hide Watch Event" menu command.
+   */
+  async function updateHideWatchEventMenuCommand() {
+    if (hideWatchEventMenuID !== null) {
+      try {
+        GM.unregisterMenuCommand(hideWatchEventMenuID);
+      } catch (e) {
+        // Ignore unregister failures
+      }
+    }
+
+    hideWatchEventMenuID = GM.registerMenuCommand(
+      `${hideWatchEventEnabled ? "Show" : "Hide"} Star Events`,
+      async () => {
+        hideWatchEventEnabled = !hideWatchEventEnabled;
+        try {
+          await GM.setValue(HIDE_WATCH_EVENT_KEY, hideWatchEventEnabled);
+        } catch (e) {
+          console.error("Failed to persist Hide Watch Event setting:", e);
+        }
+        console.log(
+          `Hide Watch Event is now ${hideWatchEventEnabled ? "On" : "Off"}`
+        );
+        await updateHideWatchEventMenuCommand();
+      },
+      "w"
     );
   }
 
@@ -992,6 +1025,9 @@
             if (actorFilterEnabled) {
               newEvents = newEvents.filter((ev) => !isActorFiltered(ev.actor));
             }
+            if (hideWatchEventEnabled) {
+              newEvents = newEvents.filter((ev) => ev.type !== "WatchEvent");
+            }
             eventsList = eventsList.concat(newEvents);
             currentPage = nextPage;
             hasMore = !!data.hasNext && newEvents.length > 0;
@@ -1040,6 +1076,9 @@
       if (actorFilterEnabled) {
         events = events.filter((ev) => !isActorFiltered(ev.actor));
       }
+      if (hideWatchEventEnabled) {
+        events = events.filter((ev) => ev.type !== "WatchEvent");
+      }
       eventsList = events;
       currentPage = 1;
       hasMore = !!data.hasNext && events.length > 0;
@@ -1072,12 +1111,18 @@
     } catch {
       useSidebarEnabled = true;
     }
+    try {
+      hideWatchEventEnabled = await GM.getValue(HIDE_WATCH_EVENT_KEY, false);
+    } catch {
+      hideWatchEventEnabled = false;
+    }
     initMarkdown();
 
     GM.registerMenuCommand("Configure GitHub Token", configureToken);
     await updateRenderBodyMenuCommand();
     await updateActorFilterMenuCommand();
     await updateUseSidebarMenuCommand();
+    await updateHideWatchEventMenuCommand();
 
     // Step 2: Get token
     const token = await getToken();
