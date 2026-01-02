@@ -728,9 +728,10 @@
           break;
 
         case "PullRequestEvent":
-          content = `${actorAvatar}${actorLink} ${payload?.action || "did"} 
+          content = `${actorAvatar}${actorLink} ${payload?.action || "did"}
                     <a href="${
-                      payload?.pull_request?.html_url || "#"
+                      payload?.pull_request?.html_url ||
+                      `https://github.com/${repo?.name || ""}/pull/${payload?.pull_request?.number || ""}`
                     }" target="_blank" rel="noopener noreferrer">pull request #${
             payload?.pull_request?.number || "?"
           }</a> in ${repoLink}`;
