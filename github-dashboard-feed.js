@@ -3,7 +3,7 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.9.4
+// @version      0.9.5
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
@@ -731,7 +731,9 @@
           content = `${actorAvatar}${actorLink} ${payload?.action || "did"}
                     <a href="${
                       payload?.pull_request?.html_url ||
-                      `https://github.com/${repo?.name || ""}/pull/${payload?.pull_request?.number || ""}`
+                      `https://github.com/${repo?.name || ""}/pull/${
+                        payload?.pull_request?.number || ""
+                      }`
                     }" target="_blank" rel="noopener noreferrer">pull request #${
             payload?.pull_request?.number || "?"
           }</a> in ${repoLink}`;
