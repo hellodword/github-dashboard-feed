@@ -3,13 +3,13 @@
 // @namespace    https://github.com/hellodword/github-dashboard-feed
 // @homepageURL  https://github.com/hellodword/github-dashboard-feed
 // @icon         https://github.com/favicon.ico
-// @version      0.9.6
+// @version      0.9.7
 // @description  Show your GitHub received events as dashboard-style cards
 // @author       hellodword
 // @match        https://github.com/
 // @match        https://github.com/dashboard
 // @require      https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.3.1/purify.min.js
+// @require      https://cdn.jsdelivr.net/npm/dompurify@3.3.3/dist/purify.min.js
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.registerMenuCommand
@@ -157,7 +157,7 @@
           GM.notification(
             asciiText.length > NOTIFICATION_MAX_LENGTH
               ? asciiText.slice(0, NOTIFICATION_MAX_LENGTH) + "..."
-              : asciiText
+              : asciiText,
           );
         } catch {
           // Ignore notification failures
@@ -193,11 +193,11 @@
           console.error("Failed to persist Render Body setting:", e);
         }
         console.log(
-          `Render Body Feature is now ${renderBodyEnabled ? "On" : "Off"}`
+          `Render Body Feature is now ${renderBodyEnabled ? "On" : "Off"}`,
         );
         await updateRenderBodyMenuCommand();
       },
-      "t"
+      "t",
     );
   }
 
@@ -225,7 +225,7 @@
         console.log(`Actor Filter is now ${actorFilterEnabled ? "On" : "Off"}`);
         await updateActorFilterMenuCommand();
       },
-      "a"
+      "a",
     );
   }
 
@@ -253,7 +253,7 @@
         console.log(`Rendering in ${useSidebarEnabled ? "sidebar" : "middle"}`);
         await updateUseSidebarMenuCommand();
       },
-      "t"
+      "t",
     );
   }
 
@@ -279,11 +279,11 @@
           console.error("Failed to persist Hide Watch Event setting:", e);
         }
         console.log(
-          `Hide Watch Event is now ${hideWatchEventEnabled ? "On" : "Off"}`
+          `Hide Watch Event is now ${hideWatchEventEnabled ? "On" : "Off"}`,
         );
         await updateHideWatchEventMenuCommand();
       },
-      "w"
+      "w",
     );
   }
 
@@ -327,7 +327,7 @@
       const metaUserLogin = document.querySelector('meta[name="user-login"]');
       if (metaUserLogin?.content) return metaUserLogin.content;
       const metaActorLogin = document.querySelector(
-        'meta[name="octolytics-actor-login"]'
+        'meta[name="octolytics-actor-login"]',
       );
       if (metaActorLogin?.content) return metaActorLogin.content;
       const dataLogin = document.querySelector("[data-login]");
@@ -371,7 +371,7 @@
           if (sidebar) return resolve(sidebar);
           if (Date.now() - start > timeout)
             return reject(
-              new Error("Timed out waiting for feed-right-sidebar")
+              new Error("Timed out waiting for feed-right-sidebar"),
             );
           setTimeout(poll, 300);
         } catch (e) {
@@ -413,7 +413,7 @@
    */
   async function fetchReceivedEvents(username, token, perPage = 30, page = 1) {
     const url = `https://api.github.com/users/${encodeURIComponent(
-      username
+      username,
     )}/received_events?per_page=${perPage}&page=${page}`;
     try {
       const res = await fetch(url, {
@@ -466,7 +466,7 @@
   function insertEventsSectionSibling(
     cardsWrapper,
     parent,
-    sectionId = FEED_SECTION_ID
+    sectionId = FEED_SECTION_ID,
   ) {
     removeOldSection(sectionId);
     cardsWrapper.id = sectionId;
@@ -615,7 +615,7 @@
     const actorLink =
       actor && actor.login
         ? `<a style="font-weight:bold" href="https://github.com/${encodeURIComponent(
-            actor.login
+            actor.login,
           )}" target="_blank" rel="noopener noreferrer">${actor.login}</a>`
         : "";
     const actorAvatar =
@@ -639,10 +639,10 @@
         html
           ? `<div class="event-body-html">${DOMPurify.sanitize(html)}</div>`
           : body && md
-          ? `<div class="event-body-md">${DOMPurify.sanitize(
-              md.render(body)
-            )}</div>`
-          : ""
+            ? `<div class="event-body-md">${DOMPurify.sanitize(
+                md.render(body),
+              )}</div>`
+            : ""
       }</div>`;
       return htmlContent;
     }
@@ -663,7 +663,7 @@
           content = `${actorAvatar}${actorLink} forked <a href="${
             payload?.forkee?.html_url || "#"
           }" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
-            payload?.forkee?.full_name || ""
+            payload?.forkee?.full_name || "",
           )}</a> from ${repoLink}`;
           break;
 
@@ -690,14 +690,14 @@
                   messages.length === 0
                     ? ""
                     : messages.length === 1
-                    ? messages[0]
-                    : messages[0] + " ...";
+                      ? messages[0]
+                      : messages[0] + " ...";
                 list.push(
                   `- **[${
                     commit.sha?.substring(0, 7) || "?"
                   }](https://github.com/${repo?.name || ""}/commit/${
                     commit.sha
-                  })**: ${message}`
+                  })**: ${message}`,
                 );
               }
               content += renderBodyOrShortHtml(list.join("\n"), null);
@@ -712,7 +712,7 @@
             content = `${actorAvatar}${actorLink} created ${
               payload?.ref_type || ""
             } <strong>${DOMPurify.sanitize(
-              payload?.ref || ""
+              payload?.ref || "",
             )}</strong> in ${repoLink}`;
           }
           break;
@@ -721,7 +721,7 @@
           content = `${actorAvatar}${actorLink} deleted ${
             payload?.ref_type || ""
           } <strong>${DOMPurify.sanitize(
-            payload?.ref || ""
+            payload?.ref || "",
           )}</strong> in ${repoLink}`;
           break;
 
@@ -734,8 +734,8 @@
                       <a href="${
                         payload?.comment?.html_url || "#"
                       }" target="_blank" rel="noopener noreferrer">issue #${
-            payload?.issue?.number || "?"
-          }</a> in ${repoLink}`;
+                        payload?.issue?.number || "?"
+                      }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(payload?.comment?.body, null);
           if (payload?.comment?.reactions) {
             const bar = renderReactionsBar(payload.comment.reactions);
@@ -748,11 +748,11 @@
                     <a href="${
                       payload?.issue?.html_url || "#"
                     }" target="_blank" rel="noopener noreferrer">issue #${
-            payload?.issue?.number || "?"
-          }</a> in ${repoLink}`;
+                      payload?.issue?.number || "?"
+                    }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(
             `##### ${payload?.issue?.title || ""}`,
-            null
+            null,
           );
           if (payload?.issue?.reactions) {
             const bar = renderReactionsBar(payload.issue.reactions);
@@ -768,13 +768,13 @@
                         payload?.pull_request?.number || ""
                       }`
                     }" target="_blank" rel="noopener noreferrer">pull request #${
-            payload?.pull_request?.number || "?"
-          }</a> in ${repoLink}`;
+                      payload?.pull_request?.number || "?"
+                    }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(
             `##### ${payload?.pull_request?.title || ""}\n${
               payload?.pull_request?.body || ""
             }`,
-            null
+            null,
           );
           if (payload?.pull_request?.reactions) {
             const bar = renderReactionsBar(payload.pull_request.reactions);
@@ -787,13 +787,13 @@
                     <a href="${
                       payload?.review?.html_url || "#"
                     }" target="_blank" rel="noopener noreferrer">pull request #${
-            payload?.pull_request?.number || "?"
-          }</a> in ${repoLink}`;
+                      payload?.pull_request?.number || "?"
+                    }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(
             `##### ${payload?.pull_request?.title || ""}\n${
               payload?.review?.body || ""
             }`,
-            null
+            null,
           );
           if (payload?.review?.reactions) {
             const bar = renderReactionsBar(payload.review.reactions);
@@ -806,13 +806,13 @@
                     <a href="${
                       payload?.comment?.html_url || "#"
                     }" target="_blank" rel="noopener noreferrer">pull request #${
-            payload?.pull_request?.number || "?"
-          }</a> in ${repoLink}`;
+                      payload?.pull_request?.number || "?"
+                    }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(
             `##### ${payload?.pull_request?.title || ""}\n${
               payload?.comment?.body || ""
             }`,
-            null
+            null,
           );
           if (payload?.comment?.reactions) {
             const bar = renderReactionsBar(payload.comment.reactions);
@@ -825,8 +825,8 @@
                     <a href="${
                       payload?.comment?.html_url || "#"
                     }" target="_blank" rel="noopener noreferrer">commit ${
-            payload?.comment?.commit_id?.substring(0, 7) || "???"
-          }</a> in ${repoLink}`;
+                      payload?.comment?.commit_id?.substring(0, 7) || "???"
+                    }</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(payload?.comment?.body, null);
           if (payload?.comment?.reactions) {
             const bar = renderReactionsBar(payload.comment.reactions);
@@ -836,9 +836,9 @@
 
         case "MemberEvent":
           content = `${actorAvatar}${actorLink} added <a href="https://github.com/${encodeURIComponent(
-            payload?.member?.login || ""
+            payload?.member?.login || "",
           )}" target="_blank" rel="noopener noreferrer">${DOMPurify.sanitize(
-            payload?.member?.login || ""
+            payload?.member?.login || "",
           )}</a> to ${repoLink}`;
           break;
 
@@ -850,7 +850,7 @@
               let list = [];
               for (const page of pages.slice(0, 9)) {
                 list.push(
-                  `- ${page.action} [${page.page_name}](${page.html_url})`
+                  `- ${page.action} [${page.page_name}](${page.html_url})`,
                 );
               }
               content += renderBodyOrShortHtml(list.join("\n"), null);
@@ -863,8 +863,8 @@
                   <a href="${
                     payload?.release?.html_url || "#"
                   }" target="_blank" rel="noopener noreferrer">release ${DOMPurify.sanitize(
-            payload?.release?.name || payload?.release?.tag_name || ""
-          )}</a> in ${repoLink}`;
+                    payload?.release?.name || payload?.release?.tag_name || "",
+                  )}</a> in ${repoLink}`;
           content += renderBodyOrShortHtml(payload?.release?.body, null);
           if (payload?.release?.reactions) {
             const bar = renderReactionsBar(payload.release.reactions);
@@ -878,7 +878,7 @@
 
         default:
           content = `${actorAvatar}${actorLink} did <code>${DOMPurify.sanitize(
-            type || ""
+            type || "",
           )}</code> in ${repoLink}`;
       }
     } catch (e) {
@@ -899,7 +899,7 @@
     try {
       card.innerHTML = DOMPurify.sanitize(
         `<div>${content}</div>
-        <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`
+        <div style="margin-top:7px;color:gray;font-size:85%">${date}</div>`,
       );
     } catch (e) {
       card.innerHTML = "<div style='color:red'>[Error rendering card]</div>";
@@ -1019,7 +1019,7 @@
               username,
               token,
               PER_PAGE,
-              nextPage
+              nextPage,
             );
             let newEvents = Array.isArray(data.events) ? data.events : [];
             if (actorFilterEnabled) {
